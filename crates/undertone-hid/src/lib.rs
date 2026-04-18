@@ -1,15 +1,20 @@
-//! Undertone HID - Wave:3 hardware integration.
+//! Undertone HID — hardware integration for Elgato audio devices.
 //!
-//! This crate provides hardware control for the Elgato Wave:3 microphone,
-//! including mute sync, gain control, and LED state.
+//! Provides a [`Device`] trait abstraction over supported Elgato
+//! products (Wave:1, Wave:3, Wave XLR, XLR Dock). Each model ships as
+//! a sibling module implementing the trait.
 //!
-//! **Note**: The Wave:3 uses a vendor-specific USB interface (not standard HID),
-//! so this implementation may require USB protocol reverse engineering.
-//! For now, we use ALSA as a fallback for basic mic control.
+//! **Note**: Elgato's Wave series uses a vendor-specific USB interface
+//! (not standard HID), so device modules talk to the hardware via
+//! `rusb` control transfers. ALSA remains available as a fallback for
+//! simple mic volume/mute control on devices where the vendor protocol
+//! is not yet reversed.
 
 pub mod alsa_fallback;
 pub mod device;
+pub mod device_trait;
 pub mod error;
 
-pub use device::{Wave3Device, is_wave3_connected};
+pub use device::{Wave3Device, Wave3Handle, is_wave3_connected, scan_devices};
+pub use device_trait::{Device, DeviceEvent, DeviceModel, DeviceState, Rgb};
 pub use error::{HidError, HidResult};
