@@ -42,7 +42,10 @@ const B_REQUEST_GET_MEM: u8 = 0x85;
 const B_REQUEST_SET_MEM: u8 = 0x05;
 const W_VALUE: u16 = 0x0000;
 const W_INDEX: u16 = 0x3300;
-const STATE_BLOB_LEN: usize = 34;
+/// Length in bytes of the Wave XLR state blob exchanged via `GET_MEM`
+/// / `SET_MEM` control transfers. Exposed so probe and calibration
+/// tools can size buffers correctly.
+pub const STATE_BLOB_LEN: usize = 34;
 const USB_TIMEOUT: Duration = Duration::from_millis(500);
 
 // --- State-blob byte offsets (partial; see protocol.md) ------------------
@@ -187,6 +190,17 @@ pub struct WaveXlrHandle {
 impl WaveXlrHandle {
     fn emit(&self, event: DeviceEvent) {
         let _ = self.event_tx.send(event);
+    }
+
+    /// Issue a `GET_MEM` control transfer and return the raw 34-byte
+    /// state blob. Intended for protocol decoding and calibration
+    /// tools; regular callers should prefer [`Device::get_state`].
+    ///
+    /// # Errors
+    /// Propagates USB errors and surfaces short reads or an unexpected
+    /// header tag as [`HidError::ProtocolError`].
+    pub fn read_raw_state(&self) -> HidResult<[u8; STATE_BLOB_LEN]> {
+        self.read_blob()
     }
 
     fn read_blob(&self) -> HidResult<[u8; STATE_BLOB_LEN]> {

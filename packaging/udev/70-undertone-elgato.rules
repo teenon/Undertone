@@ -1,0 +1,15 @@
+# Elgato Wave series — grant user access for Undertone.
+#
+# Install:
+#   sudo cp packaging/udev/70-undertone-elgato.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --attr-match=idVendor=0fd9
+
+# Wave:1
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="006d", MODE="0660", TAG+="uaccess"
+# Wave:3
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="0070", MODE="0660", TAG+="uaccess"
+# Wave XLR
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="007d", MODE="0660", TAG+="uaccess"
+# Wave XLR Dock
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="0081", MODE="0660", TAG+="uaccess"

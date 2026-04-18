@@ -19,4 +19,4 @@ pub mod wavexlr;
 pub use device::{Wave3Device, Wave3Handle, is_wave3_connected, scan_devices};
 pub use device_trait::{Device, DeviceEvent, DeviceModel, DeviceState, Rgb};
 pub use error::{HidError, HidResult};
-pub use wavexlr::{WAVE_XLR_PID, WaveXlrDevice, WaveXlrHandle};
+pub use wavexlr::{STATE_BLOB_LEN, WAVE_XLR_PID, WaveXlrDevice, WaveXlrHandle};
