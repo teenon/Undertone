@@ -1,7 +1,8 @@
 //! Undertone Daemon - `PipeWire` audio control service.
 //!
 //! This is the main entry point for the Undertone daemon, which manages
-//! `PipeWire` audio routing, persistence, and Wave:3 hardware integration.
+//! `PipeWire` audio routing, persistence, and Elgato Wave hardware
+//! integration via the `undertone-hid` [`Device`] trait.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +19,7 @@ mod signals;
 use undertone_core::channel::ChannelState;
 use undertone_core::state::{DaemonState, StateSnapshot};
 use undertone_db::Database;
-use undertone_hid::{Wave3Device, alsa_fallback::AlsaMicControl};
+use undertone_hid::{Device, scan_devices};
 use undertone_ipc::{
     AppDiscoveredData, ChannelMuteChangedData, ChannelVolumeChangedData, DeviceConnectedData,
     Event, EventType, IpcServer, socket_path,
@@ -50,28 +51,30 @@ async fn main() -> Result<()> {
     let db = Database::open().context("Failed to open database")?;
     info!("Database initialized");
 
-    // Detect Wave:3 device and set up mic control
-    let (mut device_connected, mut device_serial, mic_control) = match Wave3Device::detect() {
-        Ok(Some(device)) => {
-            let serial = device.serial().to_string();
-            info!(serial = %serial, "Wave:3 device detected");
-
-            let control = device.alsa_card().map(|card| {
-                info!(card = %card, "Using ALSA for mic control");
-                AlsaMicControl::new(card.to_string())
-            });
-
-            (true, Some(serial), control)
+    // Scan for supported Elgato devices. Handles are returned as
+    // `Arc<dyn Device>` so new models plug in here without changes.
+    let devices: Vec<Arc<dyn Device>> = match scan_devices() {
+        Ok(list) if list.is_empty() => {
+            info!("No Elgato audio devices detected; mic control unavailable");
+            Vec::new()
         }
-        Ok(None) => {
-            info!("No Wave:3 device detected, mic control unavailable");
-            (false, None, None)
+        Ok(list) => {
+            for d in &list {
+                info!(
+                    model = d.model().name(),
+                    serial = d.serial(),
+                    "Registered device"
+                );
+            }
+            list
         }
         Err(e) => {
-            warn!(error = %e, "Failed to detect Wave:3 device");
-            (false, None, None)
+            warn!(error = %e, "Device scan failed; continuing without mic control");
+            Vec::new()
         }
     };
+    let mut device_connected = !devices.is_empty();
+    let mut device_serial = devices.first().map(|d| d.serial().to_string());
 
     // Load channels from database
     let mut channels: Vec<ChannelState> = db.load_channels().context("Failed to load channels")?;
@@ -778,32 +781,40 @@ async fn main() -> Result<()> {
                         }
 
                         Command::SetMicGain { gain } => {
-                            if let Some(ref control) = mic_control {
-                                match control.set_volume(gain) {
+                            if let Some(device) = devices.first() {
+                                match device.set_gain(gain) {
                                     Ok(()) => {
-                                        info!(gain, "Mic gain set");
+                                        info!(
+                                            model = device.model().name(),
+                                            gain,
+                                            "Mic gain set"
+                                        );
                                     }
                                     Err(e) => {
                                         error!(error = %e, "Failed to set mic gain");
                                     }
                                 }
                             } else {
-                                warn!("Mic control not available (no Wave:3 device)");
+                                warn!("Mic control not available (no device)");
                             }
                         }
 
                         Command::SetMicMute { muted } => {
-                            if let Some(ref control) = mic_control {
-                                match control.set_mute(muted) {
+                            if let Some(device) = devices.first() {
+                                match device.set_mute(muted) {
                                     Ok(()) => {
-                                        info!(muted, "Mic mute set");
+                                        info!(
+                                            model = device.model().name(),
+                                            muted,
+                                            "Mic mute set"
+                                        );
                                     }
                                     Err(e) => {
                                         error!(error = %e, "Failed to set mic mute");
                                     }
                                 }
                             } else {
-                                warn!("Mic control not available (no Wave:3 device)");
+                                warn!("Mic control not available (no device)");
                             }
                         }
 
