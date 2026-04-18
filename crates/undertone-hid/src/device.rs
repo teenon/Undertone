@@ -14,6 +14,7 @@ use tracing::{debug, info};
 use crate::alsa_fallback::AlsaMicControl;
 use crate::device_trait::{Device, DeviceEvent, DeviceModel, DeviceState, Rgb};
 use crate::error::{HidError, HidResult};
+use crate::wavexlr::WaveXlrDevice;
 
 /// Elgato USB Vendor ID.
 pub const ELGATO_VID: u16 = 0x0FD9;
@@ -256,12 +257,21 @@ pub fn scan_devices() -> HidResult<Vec<Arc<dyn Device>>> {
         devices.push(handle);
     }
 
-    // Task #7 will add:
-    // if let Some(wavexlr) = WaveXlrDevice::detect()? {
-    //     let handle = wavexlr.into_handle();
-    //     info!(serial = handle.serial(), "Registered Wave XLR device");
-    //     devices.push(handle);
-    // }
+    if let Some(wavexlr) = WaveXlrDevice::detect()? {
+        match wavexlr.into_handle() {
+            Ok(handle) => {
+                info!(serial = handle.serial(), "Registered Wave XLR device");
+                devices.push(handle);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Wave XLR detected but could not open control channel \
+                     (check udev rule for 0fd9:007d)"
+                );
+            }
+        }
+    }
 
     Ok(devices)
 }
@@ -282,7 +292,7 @@ mod tests {
             DeviceModel::WaveXlr.usb_pid(),
             DeviceModel::XlrDock.usb_pid(),
         ];
-        let mut sorted = pids;
+        let mut sorted = pids.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), pids.len(), "duplicate PIDs across models");
