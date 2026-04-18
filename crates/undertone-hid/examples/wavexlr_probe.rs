@@ -37,7 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Bytes that move are ones we still need to decode.\n");
     println!(
         "Legend: 00,01 = gain_lo/hi  |  03 = header_tag  |  04 = mute_flag  |  \
-         16..=24 = led_zones  |  others = opaque/unknown\n"
+         09 = knob_fine  |  10 = knob_delta  |  16..=24 = led_zones  |  \
+         others = opaque/unknown\n"
     );
 
     let start = Instant::now();
@@ -91,6 +92,8 @@ fn offset_label(off: usize) -> &'static str {
         1 => "gain_hi",
         3 => "header_tag",
         4 => "mute_flag",
+        9 => "knob_fine",
+        10 => "knob_delta",
         16..=24 => "led_zone",
         _ => "unknown",
     }

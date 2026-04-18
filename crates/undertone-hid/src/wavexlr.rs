@@ -2,16 +2,17 @@
 //!
 //! Talks to an Elgato Wave XLR (VID:PID `0x0FD9:0x007D`) over a
 //! vendor-specific UAC memory-block protocol on a hidden audio entity
-//! (ID `0x33`). See the project handoff `protocol.md` for the
+//! (ID `0x33`). See the project `protocol.md` for the full
 //! reverse-engineering reference.
 //!
-//! The device is driven entirely through EP0 control transfers — we do
-//! **not** claim the audio-control interface, because `snd_usb_audio`
-//! owns it. The kernel allows user-space control transfers on EP0
-//! without driver detach.
+//! Driven through EP0 control transfers. Linux requires interface 0
+//! (the `AudioControl` interface, owned by `snd_usb_audio`) to be claimed
+//! before class-recipient requests go through, so
+//! [`WaveXlrDevice::into_handle`] auto-detaches the kernel driver and
+//! claims interface 0; rusb reattaches on drop. Audio streaming on the
+//! `AudioStreaming` interfaces is not disturbed.
 //!
-//! Access requires a udev rule granting the user RW access to the
-//! device node, e.g.:
+//! Access also requires a udev rule granting the user RW access, e.g.:
 //!
 //! ```text
 //! SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="007d", MODE="0660", TAG+="uaccess"
@@ -19,6 +20,17 @@
 //!
 //! Without it, `detect()` succeeds but `into_handle()` returns
 //! [`HidError::PermissionDenied`].
+//!
+//! Known state-blob fields (as of 2026-04-18):
+//!
+//! | offset | field        | notes                                         |
+//! |-------:|--------------|-----------------------------------------------|
+//! | 0–1    | `mic_gain`   | LE u16, dB scale unconfirmed                  |
+//! | 3      | `header_tag` | always `0xEC`                                 |
+//! | 4      | `mute_flag`  | `0`/`1`; tag-button folds into this byte      |
+//! | 9      | `knob_fine`  | sub-detent encoder, step `±0x33` per detent   |
+//! | 10     | `knob_delta` | signed detent counter, `±1` per click         |
+//! | 16–24  | `led[3]`     | three RGB-ish zones, byte order unconfirmed   |
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -54,7 +66,18 @@ const OFFSET_MIC_GAIN_LO: usize = 0;
 const OFFSET_MIC_GAIN_HI: usize = 1;
 const OFFSET_HEADER_TAG: usize = 3;
 const HEADER_TAG_VALUE: u8 = 0xEC;
+/// Mute flag. `0x00` unmuted, `0x01` muted. Physical tag-button presses
+/// are folded into this byte by the firmware — there is no separate
+/// tag-button state byte on the bus.
 const OFFSET_MUTE_FLAG: usize = 4;
+/// Sub-detent knob encoder position. Steps by `±0x33` per detent and
+/// wraps mod 256 (~5 detents per wrap). Finer-grained than
+/// `OFFSET_KNOB_DELTA` but rarely needed on its own.
+const OFFSET_KNOB_FINE: usize = 9;
+/// Signed 8-bit knob detent counter. `+1` per CW click, `-1` per CCW
+/// click, wraps mod 256. Compute per-poll delta as
+/// `new.wrapping_sub(old) as i8`. Primary knob signal.
+const OFFSET_KNOB_DELTA: usize = 10;
 const OFFSET_LED_ZONES: usize = 16;
 const LED_ZONE_COUNT: usize = 3;
 const LED_ZONE_BYTES: usize = 3;
@@ -75,6 +98,8 @@ const _: () = {
     assert!(OFFSET_MIC_GAIN_HI < STATE_BLOB_LEN);
     assert!(OFFSET_MUTE_FLAG < STATE_BLOB_LEN);
     assert!(OFFSET_HEADER_TAG < STATE_BLOB_LEN);
+    assert!(OFFSET_KNOB_DELTA < STATE_BLOB_LEN);
+    assert!(OFFSET_KNOB_FINE < STATE_BLOB_LEN);
 };
 
 // --- Detection -----------------------------------------------------------
@@ -176,7 +201,7 @@ fn open_handle() -> HidResult<Option<DeviceHandle<GlobalContext>>> {
             // On Linux, EP0 control transfers with a Class/Interface or
             // Class/Endpoint recipient fail with EIO when the target
             // interface has a kernel driver bound. `snd_usb_audio` owns
-            // interface 0 (the AudioControl interface) on any UAC
+            // interface 0 (the `AudioControl` interface) on any UAC
             // device, so we auto-detach it here; rusb reattaches on
             // handle drop. Audio streaming on interfaces 1/2 is not
             // disturbed because those remain bound.
