@@ -1,0 +1,29 @@
+[workspace]
+# Intentionally standalone: Tauri pulls in a large dep tree (webkit, wry,
+# tao) that we don't want influencing workspace-wide lockfile resolution.
+
+[package]
+name = "undertone-tauri"
+version = "0.1.0"
+description = "Undertone — Tauri desktop mixer for Elgato Wave devices on Linux"
+authors = ["Thien-An Vu"]
+edition = "2021"
+
+[lib]
+name = "undertone_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+undertone-ipc = { path = "../../crates/undertone-ipc" }
+undertone-core = { path = "../../crates/undertone-core" }
