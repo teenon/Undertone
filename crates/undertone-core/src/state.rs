@@ -100,6 +100,18 @@ pub struct StateSnapshot {
     pub created_nodes: HashMap<String, u32>,
     /// `PipeWire` link IDs we've created
     pub created_links: HashMap<String, u32>,
+    /// Current mic mute state, sourced from the active device. `None`
+    /// when no device is connected or its state can't be read.
+    #[serde(default)]
+    pub mic_muted: Option<bool>,
+    /// Current mic gain (0.0..=1.0) sourced from the active device.
+    /// `None` when no device is connected or its state can't be read.
+    #[serde(default)]
+    pub mic_gain: Option<f32>,
+    /// Human-readable name of the active device (e.g. "Elgato Wave XLR").
+    /// `None` when no device is connected.
+    #[serde(default)]
+    pub device_model: Option<String>,
 }
 
 impl Default for StateSnapshot {
@@ -121,6 +133,9 @@ impl Default for StateSnapshot {
             monitor_output: "wave3-sink".to_string(),
             created_nodes: HashMap::new(),
             created_links: HashMap::new(),
+            mic_muted: None,
+            mic_gain: None,
+            device_model: None,
         }
     }
 }

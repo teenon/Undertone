@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
 interface Snapshot {
   device_connected: boolean;
   device_serial: string | null;
+  device_model: string | null;
+  mic_muted: boolean | null;
+  mic_gain: number | null;
   state: unknown;
   channels?: unknown[];
   app_routes?: unknown[];
@@ -15,21 +18,29 @@ type ConnectionState =
   | { kind: "connected"; snapshot: Snapshot }
   | { kind: "error"; message: string };
 
-const POLL_INTERVAL_MS = 1000;
+const POLL_INTERVAL_MS = 500;
 
 export default function App() {
   const [connection, setConnection] = useState<ConnectionState>({
     kind: "connecting",
   });
-  const [muted, setMuted] = useState(false);
-  const [gain, setGain] = useState(0.5);
-  const suppressPoll = useRef(false);
+  // Optimistic local overrides — used between user input and the next
+  // snapshot poll so sliders/buttons feel instantaneous. Cleared once
+  // the snapshot catches up.
+  const [pendingMute, setPendingMute] = useState<boolean | null>(null);
+  const [pendingGain, setPendingGain] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
-    if (suppressPoll.current) return;
     try {
       const snapshot = await invoke<Snapshot>("get_state_snapshot");
       setConnection({ kind: "connected", snapshot });
+      // Drop optimistic overrides once the daemon agrees.
+      setPendingMute((p) => (p === null || p === snapshot.mic_muted ? null : p));
+      setPendingGain((p) =>
+        p === null || (snapshot.mic_gain !== null && Math.abs(p - snapshot.mic_gain) < 0.01)
+          ? null
+          : p,
+      );
     } catch (e) {
       setConnection({ kind: "error", message: String(e) });
     }
@@ -56,37 +67,34 @@ export default function App() {
     };
   }, [refresh]);
 
+  const snapshot =
+    connection.kind === "connected" ? connection.snapshot : null;
+  const connected = snapshot?.device_connected ?? false;
+  const serial = snapshot?.device_serial ?? null;
+  const deviceModel = snapshot?.device_model ?? null;
+  const muted = pendingMute ?? snapshot?.mic_muted ?? false;
+  const gain = pendingGain ?? snapshot?.mic_gain ?? 0;
+
   const toggleMute = async () => {
-    suppressPoll.current = true;
+    const next = !muted;
+    setPendingMute(next);
     try {
-      const next = !muted;
       await invoke("set_mic_mute", { muted: next });
-      setMuted(next);
     } catch (e) {
+      setPendingMute(null);
       setConnection({ kind: "error", message: String(e) });
-    } finally {
-      suppressPoll.current = false;
     }
   };
 
   const updateGain = async (value: number) => {
-    setGain(value);
-    suppressPoll.current = true;
+    setPendingGain(value);
     try {
       await invoke("set_mic_gain", { gain: value });
     } catch (e) {
+      setPendingGain(null);
       setConnection({ kind: "error", message: String(e) });
-    } finally {
-      suppressPoll.current = false;
     }
   };
-
-  const connected =
-    connection.kind === "connected" && connection.snapshot.device_connected;
-  const serial =
-    connection.kind === "connected"
-      ? connection.snapshot.device_serial
-      : null;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -120,7 +128,9 @@ export default function App() {
                 Device
               </div>
               <div className="mt-1 text-xl font-medium">
-                {connected ? "Elgato Wave XLR" : "No device detected"}
+                {connected
+                  ? deviceModel ?? "Connected device"
+                  : "No device detected"}
               </div>
               {serial && (
                 <div className="mt-0.5 font-mono text-xs text-zinc-500">

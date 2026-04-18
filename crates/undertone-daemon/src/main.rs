@@ -450,6 +450,23 @@ async fn main() -> Result<()> {
                     })
                     .collect();
 
+                // Pull live mic state from the active device so the
+                // snapshot reflects physical knob/tag-button changes
+                // since the last command. ~5 ms over USB; fine at the
+                // typical IPC poll cadence.
+                let (mic_muted, mic_gain, device_model) = if let Some(d) = devices.first() {
+                    let model = Some(d.model().name().to_string());
+                    match d.get_state() {
+                        Ok(s) => (Some(s.mic_muted), Some(s.mic_gain), model),
+                        Err(e) => {
+                            debug!(error = %e, "device.get_state failed; snapshot omits mic state");
+                            (None, None, model)
+                        }
+                    }
+                } else {
+                    (None, None, None)
+                };
+
                 let snapshot = StateSnapshot {
                     state: state.clone(),
                     device_connected,
@@ -463,6 +480,9 @@ async fn main() -> Result<()> {
                     monitor_output: monitor_output.clone(),
                     created_nodes: graph.get_created_nodes(),
                     created_links: graph.get_created_links(),
+                    mic_muted,
+                    mic_gain,
+                    device_model,
                 };
 
                 let handle_result = server::handle_request(&request.method, &snapshot);
