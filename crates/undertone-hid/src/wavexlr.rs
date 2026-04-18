@@ -155,6 +155,11 @@ impl WaveXlrDevice {
     }
 }
 
+/// Audio-control interface number on the Wave XLR. Vendor control
+/// transfers target entity `0x33` on this interface, so Linux requires
+/// us to claim it before issuing class-recipient requests.
+const AUDIO_CONTROL_INTERFACE: u8 = 0;
+
 fn open_handle() -> HidResult<Option<DeviceHandle<GlobalContext>>> {
     let devices = rusb::devices().map_err(|e| HidError::UsbError(e.to_string()))?;
 
@@ -167,6 +172,23 @@ fn open_handle() -> HidResult<Option<DeviceHandle<GlobalContext>>> {
                 rusb::Error::Access => HidError::PermissionDenied,
                 other => HidError::UsbError(other.to_string()),
             })?;
+
+            // On Linux, EP0 control transfers with a Class/Interface or
+            // Class/Endpoint recipient fail with EIO when the target
+            // interface has a kernel driver bound. `snd_usb_audio` owns
+            // interface 0 (the AudioControl interface) on any UAC
+            // device, so we auto-detach it here; rusb reattaches on
+            // handle drop. Audio streaming on interfaces 1/2 is not
+            // disturbed because those remain bound.
+            if let Err(e) = handle.set_auto_detach_kernel_driver(true) {
+                debug!(error = %e, "auto-detach not supported on this platform");
+            }
+            handle
+                .claim_interface(AUDIO_CONTROL_INTERFACE)
+                .map_err(|e| match e {
+                    rusb::Error::Access => HidError::PermissionDenied,
+                    other => HidError::UsbError(format!("claim interface 0: {other}")),
+                })?;
             return Ok(Some(handle));
         }
     }
