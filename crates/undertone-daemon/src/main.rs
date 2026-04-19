@@ -45,6 +45,14 @@ async fn main() -> Result<()> {
 
     info!(version = env!("CARGO_PKG_VERSION"), "Starting Undertone daemon");
 
+    // Bail early if other undertone-daemon processes are already
+    // running. Two daemons fighting over the IPC socket and the Wave
+    // XLR's USB interface produces the famously confusing "sliders
+    // disabled in the UI but `nc` shows good values" symptom — the
+    // Tauri client ends up talking to whichever daemon is the loser
+    // (no USB access). Logged loudly so it's obvious in journalctl.
+    check_for_duplicate_daemons();
+
     // Load configuration
     let _config = config::load_config()?;
     info!("Configuration loaded");
@@ -1152,6 +1160,67 @@ fn node_id_to_kind(node_id: &str) -> Option<EffectKind> {
         .iter()
         .copied()
         .find(|k| k.node_id() == node_id)
+}
+
+/// Warn loudly if other `undertone-daemon` processes are already
+/// running. We don't kill them — that'd be presumptuous — but we
+/// surface them in the log so the user (or a future session of me)
+/// notices before the IPC traffic is split between daemons.
+///
+/// Implementation walks `/proc` rather than shelling out to `pgrep`
+/// because the kernel's `comm` field truncates to 15 chars, which
+/// turns `undertone-daemon` into `undertone-daemo` and breaks
+/// `pgrep -x`. `/proc/<pid>/exe` resolves to the full binary path,
+/// which we compare against our own.
+fn check_for_duplicate_daemons() {
+    let our_pid = std::process::id();
+    let our_exe = match std::fs::read_link(format!("/proc/{our_pid}/exe")) {
+        Ok(p) => p,
+        Err(e) => {
+            debug!(error = %e, "couldn't read own /proc exe; skipping duplicate check");
+            return;
+        }
+    };
+
+    let entries = match std::fs::read_dir("/proc") {
+        Ok(it) => it,
+        Err(_) => return,
+    };
+
+    let mut others: Vec<u32> = Vec::new();
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        if name == our_pid {
+            continue;
+        }
+        let exe_link = format!("/proc/{name}/exe");
+        if let Ok(exe) = std::fs::read_link(&exe_link)
+            && exe == our_exe
+        {
+            others.push(name);
+        }
+    }
+
+    if !others.is_empty() {
+        others.sort_unstable();
+        let pids = others
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        warn!(
+            our_pid,
+            others = %pids,
+            "Detected {} other undertone-daemon process(es) running. \
+             Only one daemon should be alive at a time — multiples \
+             fight over the IPC socket and the Wave XLR USB interface, \
+             which presents as null mic state in the Tauri UI. \
+             Kill the orphans with: kill -9 {pids}",
+            others.len(),
+        );
+    }
 }
 
 /// Query PipeWire (via `pactl`) for the current default sink or source
