@@ -8,9 +8,21 @@ directories.
 ## Install
 
 ```sh
-./packaging/install.sh                  # copy files to ~/.local/, ~/.config/
+./packaging/install.sh --deps           # install system packages (apt/dnf/pacman, sudo)
+./packaging/install.sh                  # copy launcher / desktop / systemd into ~/.local/
 ./packaging/install.sh --enable         # also enable + start the systemd unit
-./packaging/install.sh --uninstall      # remove everything (clean uninstall)
+./packaging/install.sh --check          # report which deps are present vs missing
+./packaging/install.sh --uninstall      # remove user-level files (deps untouched)
+```
+
+A typical first-run sequence on a fresh machine:
+
+```sh
+./packaging/install.sh --deps
+cargo build --release -p undertone-daemon
+(cd undertone-tauri && cargo tauri build --no-bundle)
+./packaging/install.sh --enable
+systemctl --user restart pipewire wireplumber pipewire-pulse  # one-time, loads the effects chain
 ```
 
 After installing you can:
