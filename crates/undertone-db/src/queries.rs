@@ -10,6 +10,15 @@ use undertone_core::{
 
 use crate::{Database, DbResult};
 
+/// Persisted per-device firmware-level settings. Keyed by USB serial so
+/// a user with multiple Elgato devices gets independent restore.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeviceSettings {
+    pub mic_gain: f32,
+    pub mic_muted: bool,
+    pub headphone_volume: f32,
+}
+
 impl Database {
     /// Load all channels with their current state.
     pub fn load_channels(&self) -> DbResult<Vec<ChannelState>> {
@@ -330,6 +339,56 @@ impl Database {
         Ok(deleted > 0)
     }
 
+    /// Load persisted settings for a specific device by USB serial.
+    /// Returns `None` when there's no row for this device yet — callers
+    /// should treat that as "leave the firmware's current values alone".
+    pub fn load_device_settings(&self, serial: &str) -> DbResult<Option<DeviceSettings>> {
+        let row = self
+            .conn
+            .query_row(
+                r"SELECT mic_gain, mic_muted, headphone_volume
+                  FROM device_settings WHERE device_serial = ?",
+                params![serial],
+                |row| {
+                    Ok(DeviceSettings {
+                        mic_gain: row.get::<_, f64>(0)? as f32,
+                        mic_muted: row.get(1)?,
+                        headphone_volume: row.get::<_, f64>(2)? as f32,
+                    })
+                },
+            )
+            .ok();
+        Ok(row)
+    }
+
+    /// Upsert the full settings tuple for a device. Keeping the write
+    /// atomic across all three fields avoids the drift you'd get if each
+    /// Set* command only touched its own column (unset fields would read
+    /// back as the column default on the next startup).
+    pub fn save_device_settings(
+        &self,
+        serial: &str,
+        settings: &DeviceSettings,
+    ) -> DbResult<()> {
+        self.conn.execute(
+            r"INSERT INTO device_settings
+                (device_serial, mic_gain, mic_muted, headphone_volume, last_seen_at)
+              VALUES (?, ?, ?, ?, datetime('now'))
+              ON CONFLICT(device_serial) DO UPDATE SET
+                mic_gain = excluded.mic_gain,
+                mic_muted = excluded.mic_muted,
+                headphone_volume = excluded.headphone_volume,
+                last_seen_at = excluded.last_seen_at",
+            params![
+                serial,
+                f64::from(settings.mic_gain),
+                settings.mic_muted,
+                f64::from(settings.headphone_volume),
+            ],
+        )?;
+        Ok(())
+    }
+
     /// Get the default profile name.
     pub fn get_default_profile(&self) -> DbResult<Option<String>> {
         let name: Option<String> = self
@@ -575,6 +634,43 @@ mod tests {
 
         db.log_event("error", "test", "Error message", None)
             .expect("Failed to log event without data");
+    }
+
+    #[test]
+    fn test_device_settings_round_trip() {
+        let db = test_db();
+
+        // No row yet → None.
+        let loaded = db.load_device_settings("A01DA411221Z").unwrap();
+        assert!(loaded.is_none());
+
+        // Upsert once, verify.
+        let s = DeviceSettings {
+            mic_gain: 0.42,
+            mic_muted: true,
+            headphone_volume: 0.77,
+        };
+        db.save_device_settings("A01DA411221Z", &s).unwrap();
+        let loaded = db.load_device_settings("A01DA411221Z").unwrap().unwrap();
+        assert!((loaded.mic_gain - 0.42).abs() < 0.001);
+        assert!(loaded.mic_muted);
+        assert!((loaded.headphone_volume - 0.77).abs() < 0.001);
+
+        // Upsert again with different values — should update, not duplicate.
+        let s2 = DeviceSettings {
+            mic_gain: 0.10,
+            mic_muted: false,
+            headphone_volume: 0.90,
+        };
+        db.save_device_settings("A01DA411221Z", &s2).unwrap();
+        let loaded = db.load_device_settings("A01DA411221Z").unwrap().unwrap();
+        assert!((loaded.mic_gain - 0.10).abs() < 0.001);
+        assert!(!loaded.mic_muted);
+        assert!((loaded.headphone_volume - 0.90).abs() < 0.001);
+
+        // Different serial stays independent.
+        let other_loaded = db.load_device_settings("OTHER-SERIAL").unwrap();
+        assert!(other_loaded.is_none());
     }
 
     #[test]

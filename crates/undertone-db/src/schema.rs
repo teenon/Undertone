@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS profile_routes (
     PRIMARY KEY (profile_id, pattern)
 );
 
--- Device settings
+-- Device settings. `mic_muted` and `headphone_volume` are added by
+-- migration v3 — keep this definition historically accurate to v1.
 CREATE TABLE IF NOT EXISTS device_settings (
     device_serial TEXT PRIMARY KEY,
     mic_gain REAL NOT NULL DEFAULT 0.5,
