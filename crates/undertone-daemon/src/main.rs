@@ -102,12 +102,15 @@ async fn main() -> Result<()> {
     // Track active app routes
     let mut active_apps: Vec<undertone_core::routing::AppRoute> = vec![];
 
-    // Mic effect chain. v1: lives in memory; defaults to "Off" (every
-    // effect bypassed). The daemon writes a config drop-in for
-    // PipeWire to pick up at its next start; runtime parameter
-    // changes go through `pw-cli set-param` and don't persist across
-    // PipeWire restarts (the drop-in defaults do).
-    let mut mic_chain = MicChain::default();
+    // Mic effect chain. Loaded from the db so preset/bypass/param
+    // tweaks survive a daemon restart; falls back to defaults ("Off"
+    // — every effect bypassed) on first run or when the stored blob
+    // fails to deserialize (e.g. chain schema changed between
+    // versions). The daemon writes a config drop-in for PipeWire to
+    // pick up at its next start; runtime parameter changes go through
+    // `pw-cli set-param` and don't persist across PipeWire restarts
+    // (the drop-in defaults do).
+    let mut mic_chain = load_mic_chain_from_db(&db);
     match filter_chain::install_config(&mic_chain.to_pipewire_config_drop_in()) {
         Ok(path) => info!(path = %path.display(), "Wrote mic-chain config drop-in"),
         Err(e) => warn!(error = %e, "Failed to write mic-chain config drop-in; effects panel will be inert"),
@@ -930,6 +933,7 @@ async fn main() -> Result<()> {
                                 inst.bypassed = bypassed;
                             });
                             push_chain_to_pipewire(&mic_chain, &effect);
+                            persist_mic_chain(&mic_chain, &db);
                             info!(effect = %effect, bypassed, "Effect bypass updated");
                         }
 
@@ -942,6 +946,7 @@ async fn main() -> Result<()> {
                             // preset" claim — mark as custom so the UI's
                             // dropdown reflects reality.
                             mic_chain.preset = None;
+                            persist_mic_chain(&mic_chain, &db);
                             debug!(effect = %effect, param = %param, value, "Effect param updated");
                         }
 
@@ -958,6 +963,7 @@ async fn main() -> Result<()> {
                                 for kind in EffectKind::all() {
                                     push_chain_to_pipewire(&mic_chain, kind.node_id());
                                 }
+                                persist_mic_chain(&mic_chain, &db);
                                 info!(preset = %name, "Loaded effect preset");
                             } else {
                                 warn!(preset = %name, "Unknown effect preset");
@@ -974,6 +980,7 @@ async fn main() -> Result<()> {
                             for kind in EffectKind::all() {
                                 push_chain_to_pipewire(&mic_chain, kind.node_id());
                             }
+                            persist_mic_chain(&mic_chain, &db);
                             info!("Reset effect chain to defaults");
                         }
 
@@ -1126,6 +1133,52 @@ fn apply_persisted_settings(device: &Arc<dyn Device>, db: &Database) {
         Err(e) => {
             warn!(error = %e, serial, "Failed to load persisted device settings");
         }
+    }
+}
+
+/// Load the stored mic effect chain. Falls back to the default chain
+/// (everything bypassed, preset "Off") when there's no row yet, or
+/// when the stored blob fails to parse — the latter happens if the
+/// chain schema changed between daemon versions. Never panics.
+fn load_mic_chain_from_db(db: &Database) -> MicChain {
+    match db.load_mic_chain() {
+        Ok(Some(json)) => match serde_json::from_str::<MicChain>(&json) {
+            Ok(chain) => {
+                info!(preset = ?chain.preset, "Restored mic effect chain from db");
+                chain
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Stored mic chain failed to deserialize; using defaults"
+                );
+                MicChain::default()
+            }
+        },
+        Ok(None) => {
+            debug!("No persisted mic chain yet; using defaults");
+            MicChain::default()
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to query mic_chain table; using defaults");
+            MicChain::default()
+        }
+    }
+}
+
+/// Serialize the current mic chain and write it to the db. Called
+/// after every effect mutation so the next daemon start brings the
+/// exact same chain back.
+fn persist_mic_chain(chain: &MicChain, db: &Database) {
+    let json = match serde_json::to_string(chain) {
+        Ok(j) => j,
+        Err(e) => {
+            warn!(error = %e, "Failed to serialize mic chain for persistence");
+            return;
+        }
+    };
+    if let Err(e) = db.save_mic_chain(&json) {
+        warn!(error = %e, "Failed to persist mic chain");
     }
 }
 

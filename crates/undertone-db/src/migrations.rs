@@ -7,7 +7,7 @@ use crate::error::{DbError, DbResult};
 use crate::schema::{DEFAULT_DATA, SCHEMA_V1};
 
 /// Current schema version.
-const CURRENT_VERSION: i32 = 3;
+const CURRENT_VERSION: i32 = 4;
 
 /// Migration v2: Add `mixer_state` column to profiles.
 const SCHEMA_V2: &str = r"
@@ -18,6 +18,17 @@ ALTER TABLE profiles ADD COLUMN mixer_state TEXT;
 const SCHEMA_V3: &str = r"
 ALTER TABLE device_settings ADD COLUMN mic_muted BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE device_settings ADD COLUMN headphone_volume REAL NOT NULL DEFAULT 0.5;
+";
+
+/// Migration v4: Persist the mic effect chain. Single-row table — the
+/// `CHECK (id = 0)` constraint makes "just one row" a schema invariant
+/// so upserts don't need WHERE clauses.
+const SCHEMA_V4: &str = r"
+CREATE TABLE IF NOT EXISTS mic_chain (
+    id INTEGER PRIMARY KEY CHECK (id = 0),
+    chain_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 ";
 
 /// Run all pending migrations.
@@ -74,6 +85,10 @@ fn apply_migration(conn: &Connection, version: i32) -> DbResult<()> {
         }
         3 => {
             conn.execute_batch(SCHEMA_V3)?;
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", [version])?;
+        }
+        4 => {
+            conn.execute_batch(SCHEMA_V4)?;
             conn.execute("INSERT INTO schema_version (version) VALUES (?)", [version])?;
         }
         _ => {
