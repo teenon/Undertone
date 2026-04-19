@@ -95,6 +95,28 @@ pub enum Method {
     /// Set headphone (PCM playback) volume on the active device (0.0 - 1.0)
     SetHeadphoneVolume { volume: f32 },
 
+    // Mic effect chain (noise suppression / gate / compressor / EQ).
+    /// Read the full effect chain (effects, current parameters, descriptors).
+    /// The same data also lives on every `GetState` snapshot.
+    GetMicChain,
+    /// Toggle a single effect's bypass.
+    SetEffectBypass {
+        /// `noise_suppression` | `gate` | `compressor` | `equalizer`
+        effect: String,
+        bypassed: bool,
+    },
+    /// Set one parameter on one effect.
+    SetEffectParam {
+        effect: String,
+        /// Parameter name as exposed in the snapshot's descriptor table.
+        param: String,
+        value: f32,
+    },
+    /// Load a named preset (`Off`, `Voice`, `Streaming`, `Singing`).
+    LoadEffectPreset { name: String },
+    /// Reset the chain to factory defaults (everything bypassed).
+    ResetEffectChain,
+
     // Output device control
     /// Get available audio output devices
     GetOutputDevices,

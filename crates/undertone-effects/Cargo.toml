@@ -1,21 +1,16 @@
 [package]
-name = "undertone-core"
+name = "undertone-effects"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Undertone core - business logic for channels, routing, and state"
+description = "Undertone Effects — mic effect chain modeling and PipeWire filter-chain config emission"
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-parking_lot.workspace = true
-arc-swap.workspace = true
-regex = "1.11"
-
-undertone-effects = { path = "../undertone-effects" }
 
 [lints]
 workspace = true

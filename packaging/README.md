@@ -41,6 +41,49 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger --attr-match=idVendor=0fd9
 ```
 
+## Mic effects (LV2/LADSPA plugins)
+
+The Undertone mic chain (noise suppression, gate, compressor,
+parametric EQ) lives in PipeWire and needs three system packages:
+
+```sh
+sudo apt install lsp-plugins-lv2 lilv-utils
+```
+
+`lsp-plugins-lv2` provides the gate, compressor, and parametric EQ;
+`lilv-utils` is the LV2 host PipeWire uses internally.
+
+**Noise suppression (RNNoise, optional, no apt package on Mint 22.3):**
+
+```sh
+git clone https://github.com/werman/noise-suppression-for-voice
+cd noise-suppression-for-voice
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make
+sudo install -m 0755 ladspa/librnnoise_ladspa.so /usr/lib/ladspa/
+```
+
+If `librnnoise_ladspa.so` is absent, the noise-suppression slot in the
+UI still renders but has no effect at runtime — the daemon writes its
+control name into the chain, and PipeWire silently ignores the missing
+plugin.
+
+**One-time PipeWire restart after first daemon run:**
+
+The daemon writes its filter-chain config drop-in to
+`~/.config/pipewire/filter-chain.conf.d/50-undertone-mic.conf`.
+PipeWire only loads filter-chain configs at start, so the very first
+time the daemon runs you need:
+
+```sh
+systemctl --user restart pipewire wireplumber pipewire-pulse
+```
+
+After that, the chain stays loaded across reboots and runtime
+parameter tweaks (sliders in the Effects panel) apply immediately
+via `pw-cli set-param` — no further restart needed.
+
 ## Customisation
 
 - **Repo location:** the launcher and systemd unit assume the repo lives

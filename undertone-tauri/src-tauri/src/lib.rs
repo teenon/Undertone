@@ -80,6 +80,45 @@ async fn set_headphone_volume(
     call(&state, Method::SetHeadphoneVolume { volume }).await
 }
 
+#[tauri::command]
+async fn get_mic_chain(state: State<'_, DaemonClient>) -> Result<serde_json::Value, String> {
+    call(&state, Method::GetMicChain).await
+}
+
+#[tauri::command]
+async fn set_effect_bypass(
+    state: State<'_, DaemonClient>,
+    effect: String,
+    bypassed: bool,
+) -> Result<serde_json::Value, String> {
+    call(&state, Method::SetEffectBypass { effect, bypassed }).await
+}
+
+#[tauri::command]
+async fn set_effect_param(
+    state: State<'_, DaemonClient>,
+    effect: String,
+    param: String,
+    value: f32,
+) -> Result<serde_json::Value, String> {
+    call(&state, Method::SetEffectParam { effect, param, value }).await
+}
+
+#[tauri::command]
+async fn load_effect_preset(
+    state: State<'_, DaemonClient>,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    call(&state, Method::LoadEffectPreset { name }).await
+}
+
+#[tauri::command]
+async fn reset_effect_chain(
+    state: State<'_, DaemonClient>,
+) -> Result<serde_json::Value, String> {
+    call(&state, Method::ResetEffectChain).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -101,6 +140,11 @@ pub fn run() {
             set_mic_mute,
             set_mic_gain,
             set_headphone_volume,
+            get_mic_chain,
+            set_effect_bypass,
+            set_effect_param,
+            load_effect_preset,
+            reset_effect_chain,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

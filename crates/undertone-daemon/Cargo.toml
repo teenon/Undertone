@@ -16,6 +16,7 @@ undertone-pipewire = { path = "../undertone-pipewire" }
 undertone-db = { path = "../undertone-db" }
 undertone-ipc = { path = "../undertone-ipc" }
 undertone-hid = { path = "../undertone-hid" }
+undertone-effects = { path = "../undertone-effects" }
 
 tokio.workspace = true
 tracing.workspace = true

@@ -189,6 +189,43 @@ pub fn handle_request(method: &Method, state: &StateSnapshot) -> HandleResult {
             )
         }
 
+        Method::GetMicChain => HandleResult::ok(
+            serde_json::to_value(&state.mic_chain).unwrap_or(json!(null)),
+        ),
+
+        Method::SetEffectBypass { effect, bypassed } => {
+            debug!(effect, bypassed, "Toggling effect bypass");
+            HandleResult::ok_with_command(
+                json!({"success": true, "effect": effect, "bypassed": bypassed}),
+                Command::SetEffectBypass { effect: effect.clone(), bypassed: *bypassed },
+            )
+        }
+
+        Method::SetEffectParam { effect, param, value } => {
+            debug!(effect, param, value, "Setting effect param");
+            HandleResult::ok_with_command(
+                json!({"success": true, "effect": effect, "param": param, "value": value}),
+                Command::SetEffectParam {
+                    effect: effect.clone(),
+                    param: param.clone(),
+                    value: *value,
+                },
+            )
+        }
+
+        Method::LoadEffectPreset { name } => {
+            info!(?name, "Loading effect preset");
+            HandleResult::ok_with_command(
+                json!({"success": true, "preset": name}),
+                Command::LoadEffectPreset { name: name.clone() },
+            )
+        }
+
+        Method::ResetEffectChain => {
+            info!("Resetting effect chain to defaults");
+            HandleResult::ok_with_command(json!({"success": true}), Command::ResetEffectChain)
+        }
+
         Method::GetOutputDevices => {
             debug!("Getting output devices");
             HandleResult::ok(json!({

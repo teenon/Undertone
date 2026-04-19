@@ -8,6 +8,8 @@ use crate::mixer::MixerState;
 use crate::profile::ProfileSummary;
 use crate::routing::AppRoute;
 
+pub use undertone_effects::MicChainSnapshot;
+
 /// Current state of the daemon.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -123,6 +125,10 @@ pub struct StateSnapshot {
     /// Current `PipeWire` default source (input) node name.
     #[serde(default)]
     pub default_source: Option<String>,
+    /// Mic effect chain state (effects with parameters + descriptors).
+    /// `None` until the daemon has built the chain on startup.
+    #[serde(default)]
+    pub mic_chain: Option<MicChainSnapshot>,
 }
 
 impl Default for StateSnapshot {
@@ -150,6 +156,7 @@ impl Default for StateSnapshot {
             device_model: None,
             default_sink: None,
             default_source: None,
+            mic_chain: None,
         }
     }
 }

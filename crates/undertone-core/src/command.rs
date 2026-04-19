@@ -32,6 +32,15 @@ pub enum Command {
     SetMicMute { muted: bool },
     /// Set headphone (PCM playback) volume on the active device
     SetHeadphoneVolume { volume: f32 },
+    /// Toggle bypass on one mic effect (`noise_suppression`, `gate`,
+    /// `compressor`, `equalizer`).
+    SetEffectBypass { effect: String, bypassed: bool },
+    /// Update one parameter on one mic effect.
+    SetEffectParam { effect: String, param: String, value: f32 },
+    /// Apply a named preset (`Off`, `Voice`, `Streaming`, `Singing`).
+    LoadEffectPreset { name: String },
+    /// Reset the mic chain to factory defaults (everything bypassed).
+    ResetEffectChain,
     /// Set monitor mix output device
     SetMonitorOutput { device_name: String },
     /// Trigger reconciliation

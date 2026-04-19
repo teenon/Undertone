@@ -8,6 +8,7 @@
 
 pub mod error;
 pub mod factory;
+pub mod filter_chain;
 pub mod graph;
 pub mod link;
 pub mod monitor;

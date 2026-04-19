@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import EffectsPanel, { MicChainSnapshot } from "./components/EffectsPanel";
 
 interface Snapshot {
   device_connected: boolean;
@@ -11,6 +12,7 @@ interface Snapshot {
   headphone_volume?: number | null;
   default_sink?: string | null;
   default_source?: string | null;
+  mic_chain?: MicChainSnapshot | null;
   state: unknown;
   channels?: unknown[];
   app_routes?: unknown[];
@@ -243,6 +245,8 @@ export default function App() {
             </button>
           </div>
         </section>
+
+        <EffectsPanel chain={snapshot?.mic_chain ?? null} />
 
         <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/50 p-6">
           <div className="text-xs uppercase tracking-widest text-zinc-500">

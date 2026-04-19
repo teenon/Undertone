@@ -8,6 +8,7 @@ members = [
     "crates/undertone-ipc",
     "crates/undertone-hid",
     "crates/undertone-ui",
+    "crates/undertone-effects",
 ]
 
 [workspace.package]

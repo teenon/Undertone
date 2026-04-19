@@ -19,11 +19,13 @@ mod signals;
 use undertone_core::channel::ChannelState;
 use undertone_core::state::{DaemonState, StateSnapshot};
 use undertone_db::Database;
+use undertone_effects::{EffectKind, MicChain, PresetName};
 use undertone_hid::{Device, scan_devices};
 use undertone_ipc::{
     AppDiscoveredData, ChannelMuteChangedData, ChannelVolumeChangedData, DeviceConnectedData,
     Event, EventType, IpcServer, socket_path,
 };
+use undertone_pipewire::filter_chain;
 use undertone_pipewire::{GraphEvent, GraphManager, PipeWireRuntime};
 
 /// Default channels to create
@@ -86,6 +88,17 @@ async fn main() -> Result<()> {
 
     // Track active app routes
     let mut active_apps: Vec<undertone_core::routing::AppRoute> = vec![];
+
+    // Mic effect chain. v1: lives in memory; defaults to "Off" (every
+    // effect bypassed). The daemon writes a config drop-in for
+    // PipeWire to pick up at its next start; runtime parameter
+    // changes go through `pw-cli set-param` and don't persist across
+    // PipeWire restarts (the drop-in defaults do).
+    let mut mic_chain = MicChain::default();
+    match filter_chain::install_config(&mic_chain.to_pipewire_config_drop_in()) {
+        Ok(path) => info!(path = %path.display(), "Wrote mic-chain config drop-in"),
+        Err(e) => warn!(error = %e, "Failed to write mic-chain config drop-in; effects panel will be inert"),
+    }
 
     // Initialize PipeWire graph manager
     let graph = Arc::new(GraphManager::new());
@@ -495,6 +508,7 @@ async fn main() -> Result<()> {
                     device_model,
                     default_sink,
                     default_source,
+                    mic_chain: Some(mic_chain.snapshot()),
                 };
 
                 let handle_result = server::handle_request(&request.method, &snapshot);
@@ -869,6 +883,58 @@ async fn main() -> Result<()> {
                             }
                         }
 
+                        Command::SetEffectBypass { effect, bypassed } => {
+                            apply_effect_change(&mut mic_chain, &effect, |inst| {
+                                inst.bypassed = bypassed;
+                            });
+                            push_chain_to_pipewire(&mic_chain, &effect);
+                            info!(effect = %effect, bypassed, "Effect bypass updated");
+                        }
+
+                        Command::SetEffectParam { effect, param, value } => {
+                            apply_effect_change(&mut mic_chain, &effect, |inst| {
+                                inst.params.insert(param.clone(), value);
+                            });
+                            push_chain_to_pipewire(&mic_chain, &effect);
+                            // Tweaking a param invalidates the "matches a
+                            // preset" claim — mark as custom so the UI's
+                            // dropdown reflects reality.
+                            mic_chain.preset = None;
+                            debug!(effect = %effect, param = %param, value, "Effect param updated");
+                        }
+
+                        Command::LoadEffectPreset { name } => {
+                            if let Some(preset) = PresetName::from_label(&name) {
+                                mic_chain = preset.build_chain();
+                                if let Err(e) = filter_chain::install_config(
+                                    &mic_chain.to_pipewire_config_drop_in(),
+                                ) {
+                                    warn!(error = %e, "Failed to rewrite mic-chain config");
+                                }
+                                // Re-apply every effect's runtime state so the
+                                // change shows up without a PipeWire restart.
+                                for kind in EffectKind::all() {
+                                    push_chain_to_pipewire(&mic_chain, kind.node_id());
+                                }
+                                info!(preset = %name, "Loaded effect preset");
+                            } else {
+                                warn!(preset = %name, "Unknown effect preset");
+                            }
+                        }
+
+                        Command::ResetEffectChain => {
+                            mic_chain = MicChain::default();
+                            if let Err(e) = filter_chain::install_config(
+                                &mic_chain.to_pipewire_config_drop_in(),
+                            ) {
+                                warn!(error = %e, "Failed to rewrite mic-chain config");
+                            }
+                            for kind in EffectKind::all() {
+                                push_chain_to_pipewire(&mic_chain, kind.node_id());
+                            }
+                            info!("Reset effect chain to defaults");
+                        }
+
                         Command::SetMonitorOutput { device_name } => {
                             info!(device = %device_name, "Switching monitor output");
 
@@ -927,6 +993,79 @@ async fn main() -> Result<()> {
 
     info!("Undertone daemon stopped");
     Ok(())
+}
+
+/// Locate one effect by its kind-string (`noise_suppression`, `gate`,
+/// `compressor`, `equalizer`) and apply a mutation. Logs on miss.
+fn apply_effect_change<F: FnOnce(&mut undertone_effects::EffectInstance)>(
+    chain: &mut MicChain,
+    effect: &str,
+    mutate: F,
+) {
+    match parse_effect_kind(effect) {
+        Some(kind) => {
+            if let Some(inst) = chain.effect_mut(kind) {
+                mutate(inst);
+            }
+        }
+        None => warn!(effect, "Unknown effect kind"),
+    }
+}
+
+/// Push the current state of `kind`'s effect to PipeWire via
+/// `pw-cli set-param`. Best-effort: if the chain isn't loaded yet
+/// (user hasn't restarted PipeWire), the lookup fails and we just
+/// log at debug level — the parameter is still cached in
+/// `mic_chain` and will apply at the next `PipeWire` start via the
+/// drop-in config.
+///
+/// `kind_or_node_name` accepts either an `EffectKind` string
+/// (preferred) or a raw filter-graph node identifier.
+fn push_chain_to_pipewire(chain: &MicChain, kind_or_node_name: &str) {
+    let Some(kind) = parse_effect_kind(kind_or_node_name)
+        .or_else(|| node_id_to_kind(kind_or_node_name))
+    else {
+        debug!(name = kind_or_node_name, "push_chain_to_pipewire: unknown effect");
+        return;
+    };
+    let Some(inst) = chain.effect(kind) else {
+        return;
+    };
+    let node_id = match filter_chain::lookup_node_id(undertone_effects::chain::PROCESSED_SOURCE_NAME) {
+        Ok(id) => id,
+        Err(e) => {
+            debug!(error = %e, "filter chain not loaded yet; skipping live param update");
+            return;
+        }
+    };
+    // Bypass first (LSP plugins respect `bp`; RNNoise has no port —
+    // the chain config emitter zeroes its threshold instead).
+    let bp_value = if inst.bypassed { 1.0 } else { 0.0 };
+    if !matches!(kind, EffectKind::NoiseSuppression) {
+        let _ = filter_chain::set_control(node_id, "bp", bp_value);
+    }
+    for (control, value) in &inst.params {
+        if let Err(e) = filter_chain::set_control(node_id, control, *value) {
+            debug!(control = %control, error = %e, "set_control failed");
+        }
+    }
+}
+
+fn parse_effect_kind(s: &str) -> Option<EffectKind> {
+    match s {
+        "noise_suppression" | "NoiseSuppression" => Some(EffectKind::NoiseSuppression),
+        "gate" | "Gate" => Some(EffectKind::Gate),
+        "compressor" | "Compressor" => Some(EffectKind::Compressor),
+        "equalizer" | "Equalizer" => Some(EffectKind::Equalizer),
+        _ => None,
+    }
+}
+
+fn node_id_to_kind(node_id: &str) -> Option<EffectKind> {
+    EffectKind::all()
+        .iter()
+        .copied()
+        .find(|k| k.node_id() == node_id)
 }
 
 /// Query PipeWire (via `pactl`) for the current default sink or source
