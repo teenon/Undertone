@@ -1,12 +1,61 @@
 # Undertone Development Progress
 
-**Project**: Linux-native Elgato Wave:3 audio control application
+**Project**: Linux-native Elgato Wave audio control application
 **License**: GPL-3.0
 **Started**: January 2026
 
 ---
 
-## Current Status: Core Features Complete
+## Fork status (teenon/Undertone)
+
+This fork extends upstream with Wave XLR support, a Tauri/React desktop UI,
+and a Wave Link-style mic effects rack. The upstream sections below describe
+the original Wave:3 + Qt UI feature set, which still works as-is.
+
+### What this fork adds — working
+
+- **Wave XLR control** via vendor-specific USB interface 3 (`crates/undertone-hid/src/wavexlr.rs`).
+  Mic gain, mute, headphone volume, knob/tag-button readback. Decoded protocol
+  notes in `protocol.md`.
+- **Device trait abstraction** (`crates/undertone-hid/src/device_trait.rs`) —
+  daemon scans for any supported device instead of hard-coding Wave:3.
+- **Tauri desktop UI** (`undertone-tauri/`) — close-to-tray with
+  `TrayIconBuilder`, auto-reconnect on broken-pipe IPC, multi-source wake
+  events for WebKit's hidden-window polling pause, sliders show "—" while
+  loading instead of flashing to 0%.
+- **Mic effects rack** (`crates/undertone-effects/`) — noise suppression
+  (RNNoise LADSPA), gate / compressor / parametric EQ via LSP LV2 plugins.
+  Driven by PipeWire's native `module-filter-chain` (drop-in config at
+  `~/.config/pipewire/filter-chain.conf.d/50-undertone-mic.conf`).
+- **Presets**: Off / Voice / Streaming / Singing (`crates/undertone-effects/src/presets.rs`).
+- **Default-device card** in the UI — shows current PipeWire default sink/source
+  via `pactl get-default-{sink,source}`.
+- **Packaging** (`packaging/`) — `install.sh` with `--deps` (apt/dnf/pacman OS
+  detection), `--check`, `--enable`, `--uninstall`. Templated systemd user
+  unit, `.desktop` entry, `wave-mic-test` helper script.
+- **Reliability fixes**: daemon self-heals from `snd_usb_audio` race on startup
+  (periodic rescan), warns when duplicate `undertone-daemon` processes are
+  running (walks `/proc/<pid>/exe`, since `pgrep -x` can't match the
+  16-character binary name due to kernel `comm` truncation).
+
+### Deferred / not yet built
+
+- "Hear Yourself" mic-monitor toggle.
+- Mixer / channel-strip UI in Tauri (daemon supports it; no React component yet).
+- Per-app routing UI in Tauri.
+- VU meters.
+- Wave XLR crossfader / monitor-mix byte (not yet decoded — sits in the
+  "opaque" region of the 34-byte state blob).
+- LED ring color control.
+- Knob mode assignment (volume / gain / crossfader).
+- DB persistence of effect-chain state (chain currently lives in daemon RAM
+  and resets on daemon restart; the systemd-managed daemon avoids the symptom
+  in normal use).
+- Wave XLR hotplug.
+
+---
+
+## Upstream status: Core Features Complete
 
 The daemon and UI are fully functional with all core mixing features. Volume control, mute, app routing, profiles, and output device selection all work end-to-end.
 
@@ -86,13 +135,17 @@ Undertone/
 ├── crates/
 │   ├── undertone-daemon/         # Main daemon binary
 │   ├── undertone-core/           # Business logic
-│   ├── undertone-pipewire/       # PipeWire integration
+│   ├── undertone-pipewire/       # PipeWire integration + filter-chain config
 │   ├── undertone-db/             # SQLite persistence
 │   ├── undertone-ipc/            # IPC protocol
-│   ├── undertone-hid/            # Wave:3 HID (stub)
+│   ├── undertone-hid/            # Device trait + Wave:3 / Wave XLR
+│   ├── undertone-effects/        # Mic effects rack (RNNoise / LSP gate, comp, EQ)  [fork]
 │   └── undertone-ui/             # Qt6/QML UI
+├── undertone-tauri/              # Tauri 2 + React + TS desktop UI               [fork]
+├── packaging/                    # install.sh, systemd unit, .desktop, udev      [fork]
+├── protocol.md                   # Decoded Wave XLR USB vendor protocol           [fork]
 ├── config/                       # Config templates
-└── scripts/                      # Installation scripts
+└── scripts/                      # Upstream Qt-UI installation scripts
 ```
 
 ---

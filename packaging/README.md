@@ -104,3 +104,64 @@ via `pw-cli set-param` — no further restart needed.
   --user edit undertone-daemon` and an `[Service] ExecStart=` override.
 - **Daemon log level:** the systemd unit defaults to `RUST_LOG=undertone=info`.
   Bump to `debug` via `systemctl --user edit undertone-daemon`.
+
+## Troubleshooting
+
+### Sliders are disabled even though the header pill says "Connected"
+
+Usually means the Tauri client connected to the IPC socket but the daemon
+behind it never managed to claim the Wave XLR. The most common cause is a
+**second `undertone-daemon` process** also bound to the device. The systemd
+unit is the canonical owner; manual `cargo run` or stale background launches
+will fight it for USB interface 3 and the IPC socket.
+
+Check the daemon log on startup:
+
+```sh
+journalctl --user -u undertone-daemon -n 50 --no-pager
+```
+
+A line like `another undertone-daemon process appears to be running (pid 12345)`
+means there's a duplicate. Kill it:
+
+```sh
+pgrep -fa undertone-daemon
+kill <stale-pid>
+systemctl --user restart undertone-daemon
+```
+
+### Wave XLR isn't detected after a reboot or replug
+
+`snd_usb_audio` and the daemon race during USB enumeration; the daemon
+self-heals via a periodic rescan, but if the device gets stuck (visible
+because `arecord -l` doesn't list the Wave XLR while `/proc/asound/card1/`
+exists with only `usbmixer`), recover with:
+
+```sh
+systemctl --user stop undertone-daemon
+# unplug the Wave XLR USB cable, wait ~3 s, plug it back in
+systemctl --user restart wireplumber
+systemctl --user start undertone-daemon
+```
+
+### Quick mic sanity check
+
+```sh
+wave-mic-test            # records 5 s from Wave XLR mic, plays back through Wave XLR headphones
+wave-mic-test 10         # 10 s instead
+```
+
+The script looks the source/sink up by prefix because PipeWire sometimes
+appends a numeric suffix (e.g. `.3`) when the same device re-registers across
+replugs / wireplumber restarts.
+
+### Effects sliders move but nothing changes audibly
+
+The PipeWire filter chain only loads at PipeWire start. After the very first
+daemon run (which writes the drop-in config), do the one-time restart:
+
+```sh
+systemctl --user restart pipewire wireplumber pipewire-pulse
+```
+
+After that, slider tweaks apply live via `pw-cli set-param`.

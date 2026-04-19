@@ -1,11 +1,37 @@
 # Undertone
 
-**Linux-native audio mixer for Elgato Wave:3** - providing Wave Link-style functionality using PipeWire.
+**Linux-native audio mixer for Elgato Wave devices** — providing Wave Link-style functionality using PipeWire.
 
 Undertone gives you independent control over multiple audio channels with separate stream and monitor mixes, perfect for streamers and content creators on Linux.
 
 > [!IMPORTANT]
 > This project is primarily intended for AI experimentation and research. While functional, the codebase may emphasize exploration and iteration over refinement, and some components may be experimental or evolve rapidly. It is provided as-is and is not optimized for production use.
+
+## What this fork adds
+
+This fork ([teenon/Undertone](https://github.com/teenon/Undertone)) extends upstream
+[polariscli/Undertone](https://github.com/polariscli/Undertone) with:
+
+- **Elgato Wave XLR support** (VID:PID `0fd9:007d`) — mic gain, mute, and headphone
+  volume via the device's vendor-specific USB control protocol (interface 3).
+  Decoded protocol notes live in `protocol.md`.
+- **Device trait abstraction** (`crates/undertone-hid/src/device_trait.rs`) — a
+  `Device` trait + `DeviceModel` enum so future Elgato hardware can be added
+  without forking the daemon. `Wave3` and `WaveXLR` are the two implementations.
+- **Tauri desktop UI** (`undertone-tauri/`) — React + TypeScript + Tailwind, with
+  a system tray (close-to-tray, right-click → Quit), auto-reconnect on daemon
+  restart, and a loading-state for sliders so they no longer flash to 0% on
+  launch. Replaces the Qt6/QML UI for day-to-day use; the Qt UI still builds.
+- **Wave Link-style effects rack** (`crates/undertone-effects/`) — noise
+  suppression (RNNoise), gate, compressor, and parametric EQ via PipeWire's
+  native `module-filter-chain` and LSP LV2 plugins. Presets:
+  Off / Voice / Streaming / Singing.
+- **Packaging** (`packaging/`) — `install.sh` with `--deps`, `--check`,
+  `--enable`, `--uninstall` modes; templated systemd user unit, `.desktop`
+  entry, launcher script, and a `wave-mic-test` quick-record helper.
+
+For the upstream feature set (5 virtual channels, app routing, profiles, Stream
+vs. Monitor mixes), see the sections below.
 
 ## Features
 
@@ -15,8 +41,10 @@ Undertone gives you independent control over multiple audio channels with separa
 - **Master Volume Control** - Per-mix master volume and mute
 - **Output Device Selection** - Route monitor mix to any audio output (headphones, speakers, HDMI)
 - **Profiles** - Save and load mixer configurations
-- **Mic Control** - Gain and mute control for Wave:3 microphone
-- **Native UI** - Qt6/QML with KDE Kirigami theming
+- **Mic Control** - Gain, mute, and (Wave XLR) headphone volume
+- **Effects Rack** - Noise suppression, gate, compressor, parametric EQ on the mic chain
+- **Tauri Desktop UI** - React/TypeScript with a system tray icon (this fork)
+- **Native Qt UI** - Qt6/QML with KDE Kirigami theming (upstream)
 
 ## Screenshots
 
@@ -24,29 +52,45 @@ _Coming soon_
 
 ## Requirements
 
-- Linux with PipeWire (Fedora 43+, Ubuntu 24.04+, Arch, etc.)
-- Elgato Wave:3 microphone (optional - works as general audio mixer too)
+- Linux with PipeWire (Fedora 43+, Ubuntu 24.04+, Mint 22.x, Arch, etc.)
+- Elgato Wave:3 or Wave XLR microphone (optional — works as a general audio mixer too)
 - Rust 1.85+ (Edition 2024)
-- Qt6 with Kirigami
+- For the Tauri UI: WebKitGTK 4.1, libayatana-appindicator
+- For the Qt UI (optional): Qt6 with Kirigami
 
 ## Installation
 
-### Quick Install (Recommended)
+### Tauri UI (this fork's recommended path)
+
+```sh
+git clone https://github.com/teenon/Undertone.git
+cd Undertone
+./packaging/install.sh --deps             # apt/dnf/pacman, sudo
+cargo build --release -p undertone-daemon
+(cd undertone-tauri && cargo tauri build --no-bundle)
+./packaging/install.sh --enable           # copies launcher + .desktop, enables systemd unit
+```
+
+After the first run, do a one-time PipeWire restart so the mic effects chain
+loads from `~/.config/pipewire/filter-chain.conf.d/`:
+
+```sh
+systemctl --user restart pipewire wireplumber pipewire-pulse
+```
+
+Launch from your application menu ("Undertone") or run `undertone` in a terminal.
+See [`packaging/README.md`](packaging/README.md) for `--check`, `--uninstall`,
+the udev rule for non-root USB access, and the optional RNNoise build.
+
+### Upstream installer (Qt UI)
+
+The upstream `scripts/install.sh` still works for the Qt6/QML UI:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/polariscli/Undertone/main/scripts/install.sh | bash
 ```
 
-This will:
-
-- Check and report missing dependencies
-- Clone the repository
-- Build from source
-- Install binaries, systemd service, udev rules, and WirePlumber config
-
-### Dependencies
-
-The installer will check for these automatically, but you can install them manually:
+Manual Qt-UI dependencies:
 
 ```bash
 # Fedora
@@ -70,7 +114,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ### Manual Build
 
 ```bash
-git clone https://github.com/polariscli/Undertone.git
+git clone https://github.com/teenon/Undertone.git
 cd Undertone
 cargo build --release
 ```
@@ -81,11 +125,16 @@ cargo build --release
 # Start the daemon (required)
 cargo run -p undertone-daemon --release
 
-# In another terminal, start the UI
+# In another terminal, start the Tauri UI (this fork)
+(cd undertone-tauri && cargo tauri dev)
+
+# Or the Qt UI (upstream)
 cargo run -p undertone-ui --release
 ```
 
-### Install Script Commands
+### Upstream install script
+
+The upstream installer remains available for the Qt UI build path:
 
 ```bash
 # Full installation
@@ -149,9 +198,25 @@ App (Spotify)
 
 ### Device Tab
 
-- View Wave:3 connection status
+- View Wave:3 / Wave XLR connection status
 - Adjust microphone gain
 - Toggle mic mute
+- Adjust headphone volume (Wave XLR)
+
+### Effects Panel (Tauri UI)
+
+- Per-effect bypass toggles for noise suppression, gate, compressor, EQ
+- Per-parameter sliders (threshold, ratio, attack/release, EQ gain/freq/Q)
+- Preset selector: Off, Voice, Streaming, Singing
+- Reset chain to defaults
+
+### System Tray (Tauri UI)
+
+- Closing the window hides to tray instead of quitting; daemon keeps running so
+  hardware state and effects are preserved.
+- Left-click the tray icon to show/hide the window.
+- Right-click → Quit fully exits the app (the daemon continues running under
+  systemd unless stopped explicitly).
 
 ### Profiles
 
@@ -211,13 +276,15 @@ echo '{"id":1,"method":{"type":"GetState"}}' | \
 
 - IPC Server (Unix socket) | Signal Handler | Event Loop (Tokio)
 - **undertone-core**: Channels, Mixer, App Routing, Profiles, State
-- **undertone-pipewire**: PipeWire graph management
+- **undertone-pipewire**: PipeWire graph management + filter-chain config
 - **undertone-db**: SQLite persistence
-- **undertone-hid**: Wave:3 hardware (ALSA fallback)
+- **undertone-hid**: `Device` trait + Wave:3 / Wave XLR implementations
+- **undertone-effects**: Mic effect chain (RNNoise / LSP gate, comp, EQ)
 
 _Unix Socket IPC_
 
-**undertone-ui** (Qt6/QML + Kirigami + cxx-qt)
+**undertone-tauri** (Tauri 2 + React + TypeScript + Tailwind) — this fork
+**undertone-ui** (Qt6/QML + Kirigami + cxx-qt) — upstream
 
 ## Contributing
 
