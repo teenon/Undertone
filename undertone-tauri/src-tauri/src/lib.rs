@@ -183,9 +183,34 @@ pub fn run() {
         .try_init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // A second launch just focuses the existing window rather
+            // than starting a new process. Prevents duplicate daemon
+            // connections and orphaned tray icons when the user clicks
+            // the app icon while it's already autostart-running.
+            toggle_window(app, Some(true));
+        }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
         .setup(|app| {
             app.manage(DaemonClient::new());
+
+            // The main window is configured with `visible: false` so we
+            // can decide whether to show it based on launch context.
+            // Autostart (from the generated .desktop) passes `--minimized`
+            // so we stay hidden in the tray; any other launch (manual,
+            // menu) shows the window normally.
+            let minimized = std::env::args().any(|a| a == "--minimized");
+            if !minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Err(e) = window.show() {
+                        warn!(error = %e, "failed to show main window on startup");
+                    }
+                }
+            }
 
             // System tray. Reuses the existing app icon. Best-effort:
             // if the desktop has no tray support (some Wayland

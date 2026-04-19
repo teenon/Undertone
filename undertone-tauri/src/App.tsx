@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 import EffectsPanel, { MicChainSnapshot } from "./components/EffectsPanel";
+import SettingsPanel from "./components/SettingsPanel";
+
+type Tab = "mixer" | "settings";
 
 interface Snapshot {
   device_connected: boolean;
@@ -142,6 +145,7 @@ export default function App() {
   // Deafen is UI-only: when non-null, holds the volume to restore on undeafen.
   // Daemon just sees a set_headphone_volume(0) → set_headphone_volume(prev).
   const [savedVolume, setSavedVolume] = useState<number | null>(null);
+  const [tab, setTab] = useState<Tab>("mixer");
 
   const refresh = useCallback(async () => {
     try {
@@ -301,6 +305,17 @@ export default function App() {
           </div>
           <StatusPill state={connection} />
         </div>
+        <nav className="mx-auto mt-3 flex max-w-3xl gap-4 text-sm">
+          <TabButton active={tab === "mixer"} onClick={() => setTab("mixer")}>
+            Mixer
+          </TabButton>
+          <TabButton
+            active={tab === "settings"}
+            onClick={() => setTab("settings")}
+          >
+            Settings
+          </TabButton>
+        </nav>
       </header>
 
       <main className="mx-auto max-w-3xl px-8 py-8 space-y-6">
@@ -316,6 +331,10 @@ export default function App() {
           </div>
         )}
 
+        {tab === "settings" ? (
+          <SettingsPanel />
+        ) : (
+          <>
         <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/50 p-6 backdrop-blur">
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -454,8 +473,34 @@ export default function App() {
             Tauri ↔ daemon link is alive.
           </p>
         </section>
+          </>
+        )}
       </main>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`-mb-[17px] border-b-2 px-1 pb-3 font-medium transition-colors ${
+        active
+          ? "border-emerald-500 text-emerald-400"
+          : "border-transparent text-zinc-400 hover:text-zinc-200"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
