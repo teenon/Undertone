@@ -472,6 +472,7 @@ fn parse_state(blob: &[u8; STATE_BLOB_LEN]) -> DeviceState {
         mic_muted: blob[OFFSET_MUTE_FLAG] != 0,
         mic_gain: gain_from_u16(gain_u16),
         headphone_volume: 0.0,
+        knob_position: Some(blob[OFFSET_KNOB_DELTA]),
     }
 }
 

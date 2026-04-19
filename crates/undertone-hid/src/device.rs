@@ -207,6 +207,7 @@ impl Device for Wave3Handle {
             mic_muted,
             mic_gain,
             headphone_volume: 0.0,
+            knob_position: None,
         })
     }
 

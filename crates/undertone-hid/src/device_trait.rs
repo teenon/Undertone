@@ -68,6 +68,11 @@ pub struct DeviceState {
     pub mic_gain: f32,
     /// Headphone volume, normalised to `0.0..=1.0`.
     pub headphone_volume: f32,
+    /// Raw rotary-encoder counter byte. Increments by `+1` per CW
+    /// detent and decrements by `-1` per CCW detent, wrapping mod 256.
+    /// Use `new.wrapping_sub(old) as i8` to compute the per-poll delta.
+    /// `None` for devices without a rotary encoder.
+    pub knob_position: Option<u8>,
 }
 
 /// An event emitted by a device's physical controls.

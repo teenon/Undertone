@@ -257,6 +257,15 @@ async fn main() -> Result<()> {
 
     info!("Daemon running. Press Ctrl+C to exit.");
 
+    // Knob-tracking state. Tracks the device's last observed rotary
+    // counter (byte 10 on the Wave XLR) so we can convert rotation
+    // into a headphone-volume delta. Volume step per detent is small
+    // enough that a fast spin still feels smooth without overshooting.
+    let mut last_knob_position: Option<u8> = None;
+    const KNOB_VOLUME_STEP: f32 = 0.02; // 2% per detent
+    let mut knob_poll = tokio::time::interval(Duration::from_millis(200));
+    knob_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
     // Main event loop
     loop {
         tokio::select! {
@@ -911,6 +920,31 @@ async fn main() -> Result<()> {
             _ = shutdown_rx.recv() => {
                 info!("Shutdown signal received");
                 break;
+            }
+
+            // Poll the active device's rotary knob; map clicks to
+            // headphone-volume deltas so the knob feels like a Wave
+            // Link assignable encoder.
+            _ = knob_poll.tick() => {
+                if let Some(device) = devices.first()
+                    && let Ok(snap) = device.get_state()
+                    && let Some(pos) = snap.knob_position
+                {
+                    let delta_i8: i8 = if let Some(prev) = last_knob_position {
+                        pos.wrapping_sub(prev) as i8
+                    } else {
+                        0
+                    };
+                    last_knob_position = Some(pos);
+                    if delta_i8 != 0 {
+                        let new_volume = (snap.headphone_volume
+                            + f32::from(delta_i8) * KNOB_VOLUME_STEP)
+                            .clamp(0.0, 1.0);
+                        if let Err(e) = device.set_headphone_volume(new_volume) {
+                            debug!(error = %e, "knob → headphone-volume update failed");
+                        }
+                    }
+                }
             }
         }
     }
