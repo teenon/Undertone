@@ -473,6 +473,9 @@ async fn main() -> Result<()> {
                         (None, None, None, None)
                     };
 
+                let default_sink = pactl_default("sink");
+                let default_source = pactl_default("source");
+
                 let snapshot = StateSnapshot {
                     state: state.clone(),
                     device_connected,
@@ -490,6 +493,8 @@ async fn main() -> Result<()> {
                     mic_gain,
                     headphone_volume,
                     device_model,
+                    default_sink,
+                    default_source,
                 };
 
                 let handle_result = server::handle_request(&request.method, &snapshot);
@@ -922,4 +927,22 @@ async fn main() -> Result<()> {
 
     info!("Undertone daemon stopped");
     Ok(())
+}
+
+/// Query PipeWire (via `pactl`) for the current default sink or source
+/// node name. Returns `None` if the subprocess fails or the output
+/// can't be parsed.
+fn pactl_default(kind: &str) -> Option<String> {
+    let arg = format!("get-default-{kind}");
+    let output = std::process::Command::new("pactl").arg(&arg).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8(output.stdout).ok()?;
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }

@@ -116,6 +116,13 @@ pub struct StateSnapshot {
     /// `None` when no device is connected.
     #[serde(default)]
     pub device_model: Option<String>,
+    /// Current `PipeWire` default sink (output) node name, e.g.
+    /// `alsa_output.usb-Elgato_Systems_Elgato_Wave_XLR_…`.
+    #[serde(default)]
+    pub default_sink: Option<String>,
+    /// Current `PipeWire` default source (input) node name.
+    #[serde(default)]
+    pub default_source: Option<String>,
 }
 
 impl Default for StateSnapshot {
@@ -141,6 +148,8 @@ impl Default for StateSnapshot {
             mic_gain: None,
             headphone_volume: None,
             device_model: None,
+            default_sink: None,
+            default_source: None,
         }
     }
 }

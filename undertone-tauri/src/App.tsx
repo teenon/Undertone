@@ -9,9 +9,25 @@ interface Snapshot {
   mic_muted: boolean | null;
   mic_gain: number | null;
   headphone_volume?: number | null;
+  default_sink?: string | null;
+  default_source?: string | null;
   state: unknown;
   channels?: unknown[];
   app_routes?: unknown[];
+}
+
+/// Map a PipeWire node name to a short, human-readable label.
+/// Falls back to the raw name when no rule matches.
+function friendlyDeviceName(node: string | null | undefined): string {
+  if (!node) return "—";
+  if (/Wave_XLR/i.test(node)) return "Elgato Wave XLR";
+  if (/Wave_3/i.test(node)) return "Elgato Wave:3";
+  if (/Wave_1/i.test(node)) return "Elgato Wave:1";
+  if (/XLR_Dock/i.test(node)) return "Elgato XLR Dock";
+  if (node.startsWith("alsa_output.pci-") || node.startsWith("alsa_input.pci-"))
+    return "Built-in Audio";
+  if (node.startsWith("bluez_")) return "Bluetooth";
+  return node;
 }
 
 type ConnectionState =
@@ -226,6 +242,32 @@ export default function App() {
               {muted ? "Unmute microphone" : "Mute microphone"}
             </button>
           </div>
+        </section>
+
+        <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/50 p-6">
+          <div className="text-xs uppercase tracking-widest text-zinc-500">
+            System default audio
+          </div>
+          <dl className="mt-3 grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2 text-sm">
+            <dt className="text-zinc-500">Output</dt>
+            <dd
+              className="truncate text-zinc-200"
+              title={snapshot?.default_sink ?? ""}
+            >
+              {friendlyDeviceName(snapshot?.default_sink)}
+            </dd>
+            <dt className="text-zinc-500">Input</dt>
+            <dd
+              className="truncate text-zinc-200"
+              title={snapshot?.default_source ?? ""}
+            >
+              {friendlyDeviceName(snapshot?.default_source)}
+            </dd>
+          </dl>
+          <p className="mt-3 text-xs text-zinc-500">
+            Change these in your system Sound settings. Hover for the raw
+            PipeWire node name.
+          </p>
         </section>
 
         <section className="rounded-2xl border border-zinc-800/60 bg-zinc-900/50 p-6">
