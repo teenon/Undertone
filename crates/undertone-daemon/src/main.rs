@@ -55,9 +55,13 @@ async fn main() -> Result<()> {
 
     // Scan for supported Elgato devices. Handles are returned as
     // `Arc<dyn Device>` so new models plug in here without changes.
-    let devices: Vec<Arc<dyn Device>> = match scan_devices() {
+    // `devices` is mutable so the background re-scan branch below can
+    // pick up a device that wasn't ready at startup (classic case:
+    // daemon started on login before `snd_usb_audio` finished its
+    // init transfers and `scan_devices()` came up empty).
+    let mut devices: Vec<Arc<dyn Device>> = match scan_devices() {
         Ok(list) if list.is_empty() => {
-            info!("No Elgato audio devices detected; mic control unavailable");
+            info!("No Elgato audio devices detected at startup; will retry in the background");
             Vec::new()
         }
         Ok(list) => {
@@ -270,6 +274,17 @@ async fn main() -> Result<()> {
 
     info!("Daemon running. Press Ctrl+C to exit.");
 
+    // If `devices` is empty we keep retrying `scan_devices` every 5 s
+    // in the background so a late-appearing Wave XLR / Wave:3 (classic
+    // boot race: daemon started before snd_usb_audio finished init)
+    // gets picked up without the user having to restart the daemon.
+    // The check is O(1) when `devices` is non-empty, so this keeps
+    // running harmlessly forever.
+    let mut device_scan_retry = tokio::time::interval(Duration::from_secs(5));
+    device_scan_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // First tick fires immediately; skip it — we already scanned at startup.
+    device_scan_retry.tick().await;
+
     // Main event loop
     loop {
         tokio::select! {
@@ -292,6 +307,17 @@ async fn main() -> Result<()> {
                         device_connected = true;
                         device_serial = Some(serial.clone());
                         state = DaemonState::Running;
+
+                        // Opportunistic re-scan: if startup missed the
+                        // device (snd_usb_audio race), PipeWire telling
+                        // us it's here now is the best trigger to try
+                        // again — no need to wait for the 5 s retry.
+                        if devices.is_empty()
+                            && let Some((new_serial, _)) =
+                                rescan_and_register(&mut devices, &event_tx)
+                        {
+                            device_serial = Some(new_serial);
+                        }
 
                         // Emit IPC event
                         let _ = event_tx.send(Event {
@@ -322,6 +348,10 @@ async fn main() -> Result<()> {
                         device_connected = false;
                         device_serial = None;
                         state = DaemonState::DeviceDisconnected;
+                        // Drop the now-dangling device handle so the
+                        // next `Wave3Detected` can create a fresh one
+                        // with whatever's currently on the bus.
+                        devices.clear();
 
                         // Emit IPC event
                         let _ = event_tx.send(Event {
@@ -983,6 +1013,22 @@ async fn main() -> Result<()> {
                 info!("Shutdown signal received");
                 break;
             }
+
+            // Background retry: if we came up before the device was
+            // enumerable (snd_usb_audio race on login) try again every
+            // 5 s. No-op when already populated.
+            _ = device_scan_retry.tick() => {
+                if devices.is_empty()
+                    && let Some((new_serial, _)) =
+                        rescan_and_register(&mut devices, &event_tx)
+                {
+                    device_connected = true;
+                    device_serial = Some(new_serial);
+                    if matches!(state, DaemonState::DeviceDisconnected) {
+                        state = DaemonState::Running;
+                    }
+                }
+            }
         }
     }
 
@@ -993,6 +1039,46 @@ async fn main() -> Result<()> {
 
     info!("Undertone daemon stopped");
     Ok(())
+}
+
+/// Call `scan_devices()` and, on success, swap the result into
+/// `devices`. Emits a `DeviceConnected` IPC event for every newly
+/// registered device, and returns `(first_serial, first_model)` for
+/// the caller's convenience. Returns `None` when the scan still
+/// turns up no devices.
+fn rescan_and_register(
+    devices: &mut Vec<Arc<dyn Device>>,
+    event_tx: &tokio::sync::broadcast::Sender<Event>,
+) -> Option<(String, String)> {
+    match scan_devices() {
+        Ok(list) if list.is_empty() => None,
+        Ok(list) => {
+            let mut first: Option<(String, String)> = None;
+            for d in &list {
+                let serial = d.serial().to_string();
+                let model = d.model().name().to_string();
+                info!(
+                    model = %model,
+                    serial = %serial,
+                    "Re-scan picked up device"
+                );
+                if first.is_none() {
+                    first = Some((serial.clone(), model.clone()));
+                }
+                let _ = event_tx.send(Event {
+                    event: EventType::DeviceConnected,
+                    data: serde_json::to_value(DeviceConnectedData { serial })
+                        .unwrap_or_default(),
+                });
+            }
+            *devices = list;
+            first
+        }
+        Err(e) => {
+            debug!(error = %e, "Device re-scan errored");
+            None
+        }
+    }
 }
 
 /// Locate one effect by its kind-string (`noise_suppression`, `gate`,
