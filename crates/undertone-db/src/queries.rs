@@ -339,6 +339,34 @@ impl Database {
         Ok(deleted > 0)
     }
 
+    /// Load the persisted mic effect chain as a raw JSON blob. Caller
+    /// does the `serde_json::from_str` → `MicChain` step to keep this
+    /// crate independent of `undertone-effects`. Returns `None` when
+    /// nothing's been saved yet — caller should use `MicChain::default`.
+    pub fn load_mic_chain(&self) -> DbResult<Option<String>> {
+        let row = self
+            .conn
+            .query_row("SELECT chain_json FROM mic_chain WHERE id = 0", [], |row| row.get(0))
+            .ok();
+        Ok(row)
+    }
+
+    /// Upsert the mic effect chain. `chain_json` is the serialized
+    /// `MicChain`; the caller controls schema/versioning of its
+    /// contents. Single-row table (`CHECK(id = 0)`), so the conflict
+    /// clause just replaces whatever's there.
+    pub fn save_mic_chain(&self, chain_json: &str) -> DbResult<()> {
+        self.conn.execute(
+            r"INSERT INTO mic_chain (id, chain_json, updated_at)
+              VALUES (0, ?, datetime('now'))
+              ON CONFLICT(id) DO UPDATE SET
+                chain_json = excluded.chain_json,
+                updated_at = excluded.updated_at",
+            params![chain_json],
+        )?;
+        Ok(())
+    }
+
     /// Load persisted settings for a specific device by USB serial.
     /// Returns `None` when there's no row for this device yet — callers
     /// should treat that as "leave the firmware's current values alone".
@@ -634,6 +662,24 @@ mod tests {
 
         db.log_event("error", "test", "Error message", None)
             .expect("Failed to log event without data");
+    }
+
+    #[test]
+    fn test_mic_chain_round_trip() {
+        let db = test_db();
+
+        // Nothing stored yet → None.
+        assert!(db.load_mic_chain().unwrap().is_none());
+
+        // Save opaque JSON, read it back verbatim.
+        let json = r#"{"effects":[{"kind":"gate","bypassed":false}],"preset":"Streaming"}"#;
+        db.save_mic_chain(json).unwrap();
+        assert_eq!(db.load_mic_chain().unwrap().unwrap(), json);
+
+        // Upsert replaces, never duplicates.
+        let json2 = r#"{"effects":[],"preset":null}"#;
+        db.save_mic_chain(json2).unwrap();
+        assert_eq!(db.load_mic_chain().unwrap().unwrap(), json2);
     }
 
     #[test]
