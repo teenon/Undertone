@@ -40,6 +40,51 @@ type ConnectionState =
 
 const POLL_INTERVAL_MS = 500;
 
+function MuteIconButton({
+  muted,
+  disabled,
+  onClick,
+}: {
+  muted: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const label = muted ? "Unmute microphone" : "Mute microphone";
+  const stateClasses = disabled
+    ? "border-zinc-700 text-zinc-600 cursor-not-allowed"
+    : muted
+    ? "border-red-500/70 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+    : "border-emerald-500/60 text-emerald-400 hover:bg-emerald-500/10";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={muted}
+      aria-label={label}
+      title={label}
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${stateClasses}`}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className="h-[18px] w-[18px]"
+      >
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M5 10v2a7 7 0 0 0 14 0v-2" />
+        <line x1="12" y1="19" x2="12" y2="22" />
+        <line x1="8" y1="22" x2="16" y2="22" />
+        {muted && <line x1="4" y1="4" x2="20" y2="20" />}
+      </svg>
+    </button>
+  );
+}
+
 export default function App() {
   const [connection, setConnection] = useState<ConnectionState>({
     kind: "connecting",
@@ -246,16 +291,23 @@ export default function App() {
                   {gain === undefined ? "—" : `${Math.round(gain * 100)}%`}
                 </span>
               </div>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={gain ?? 0}
-                onChange={(e) => void updateGain(parseFloat(e.target.value))}
-                disabled={!connected || gain === undefined}
-                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
-              />
+              <div className="flex items-center gap-3">
+                <MuteIconButton
+                  muted={muted}
+                  disabled={!connected}
+                  onClick={() => void toggleMute()}
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={gain ?? 0}
+                  onChange={(e) => void updateGain(parseFloat(e.target.value))}
+                  disabled={!connected || gain === undefined}
+                  className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-800 accent-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+                />
+              </div>
             </div>
 
             <div>
@@ -283,18 +335,6 @@ export default function App() {
               />
             </div>
 
-            <button
-              type="button"
-              onClick={() => void toggleMute()}
-              disabled={!connected}
-              className={`w-full rounded-xl px-4 py-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500 ${
-                muted
-                  ? "bg-red-600 text-white hover:bg-red-500"
-                  : "bg-emerald-600 text-white hover:bg-emerald-500"
-              }`}
-            >
-              {muted ? "Unmute microphone" : "Mute microphone"}
-            </button>
           </div>
         </section>
 
