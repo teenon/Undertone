@@ -95,6 +95,13 @@ const _: () = {
 /// enumerates USB and reads the serial-string descriptor only.
 pub struct WaveXlrDevice {
     serial: String,
+    /// ALSA card identifier (e.g. `"1"`) discovered from
+    /// `/proc/asound/cards`. Used by the handle for headphone-volume
+    /// control via amixer, since the firmware vendor protocol on
+    /// interface 3 doesn't (yet) expose a known headphone-volume byte.
+    /// `None` when the card hasn't been registered yet (typical when
+    /// the daemon races `snd_usb_audio` at boot).
+    alsa_card: Option<String>,
 }
 
 impl WaveXlrDevice {
@@ -118,13 +125,15 @@ impl WaveXlrDevice {
             }
 
             let serial = Self::read_serial(&device).unwrap_or_else(|| "unknown".to_string());
+            let alsa_card = Self::find_alsa_card().ok().flatten();
             info!(
                 serial = %serial,
                 bus = device.bus_number(),
                 address = device.address(),
+                alsa_card = ?alsa_card,
                 "Wave XLR detected via USB"
             );
-            return Ok(Some(Self { serial }));
+            return Ok(Some(Self { serial, alsa_card }));
         }
 
         debug!("No Wave XLR device found");
@@ -138,9 +147,28 @@ impl WaveXlrDevice {
         handle.read_serial_number_string_ascii(&desc).ok()
     }
 
+    fn find_alsa_card() -> HidResult<Option<String>> {
+        // amixer accepts the bare card number or short name; not `hw:N`.
+        let cards = std::fs::read_to_string("/proc/asound/cards").map_err(HidError::IoError)?;
+        for line in cards.lines() {
+            if (line.contains("Wave XLR") || line.contains("Wave_XLR"))
+                && let Some(num) = line.split_whitespace().next()
+                && num.parse::<u32>().is_ok()
+            {
+                return Ok(Some(num.to_string()));
+            }
+        }
+        Ok(None)
+    }
+
     #[must_use]
     pub fn serial(&self) -> &str {
         &self.serial
+    }
+
+    #[must_use]
+    pub fn alsa_card(&self) -> Option<&str> {
+        self.alsa_card.as_deref()
     }
 
     /// Open a USB control channel to the Wave XLR and claim interface 3.
@@ -157,6 +185,7 @@ impl WaveXlrDevice {
             serial: self.serial,
             usb: Mutex::new(handle),
             last_blob: Mutex::new(None),
+            alsa_card: self.alsa_card,
             event_tx,
         }))
     }
@@ -210,6 +239,10 @@ pub struct WaveXlrHandle {
     serial: String,
     usb: Mutex<DeviceHandle<GlobalContext>>,
     last_blob: Mutex<Option<[u8; STATE_BLOB_LEN]>>,
+    /// ALSA card name for amixer-based controls (currently just the
+    /// PCM Playback Volume / headphone level). The vendor protocol on
+    /// interface 3 carries the rest.
+    alsa_card: Option<String>,
     event_tx: broadcast::Sender<DeviceEvent>,
 }
 
@@ -315,7 +348,16 @@ impl Device for WaveXlrHandle {
 
     fn get_state(&self) -> HidResult<DeviceState> {
         let blob = self.read_raw_state()?;
-        Ok(parse_state(&blob))
+        let mut state = parse_state(&blob);
+        // Headphone volume isn't in the firmware blob — read it from
+        // ALSA. Best-effort: if the card name is missing or amixer
+        // fails, leave it at 0.0.
+        if let Some(card) = &self.alsa_card
+            && let Ok(v) = read_pcm_playback_volume(card)
+        {
+            state.headphone_volume = v;
+        }
+        Ok(state)
     }
 
     fn set_mute(&self, muted: bool) -> HidResult<()> {
@@ -333,6 +375,16 @@ impl Device for WaveXlrHandle {
         blob[OFFSET_MIC_GAIN_HI] = hi;
         self.write_raw_state(&blob)?;
         self.emit(DeviceEvent::StateChanged(parse_state(&blob)));
+        Ok(())
+    }
+
+    fn set_headphone_volume(&self, volume: f32) -> HidResult<()> {
+        let card = self
+            .alsa_card
+            .as_deref()
+            .ok_or_else(|| HidError::AlsaError("Wave XLR ALSA card not registered yet".into()))?;
+        write_pcm_playback_volume(card, volume)?;
+        self.emit(DeviceEvent::StateChanged(self.get_state()?));
         Ok(())
     }
 
@@ -358,6 +410,58 @@ impl Device for WaveXlrHandle {
     fn subscribe(&self) -> broadcast::Receiver<DeviceEvent> {
         self.event_tx.subscribe()
     }
+}
+
+// --- ALSA helpers (PCM playback volume only) ----------------------------
+
+/// Read the Wave XLR's PCM Playback Volume normalized to `0.0..=1.0`.
+fn read_pcm_playback_volume(card: &str) -> HidResult<f32> {
+    let output = std::process::Command::new("amixer")
+        .args(["-c", card, "sget", "PCM"])
+        .output()
+        .map_err(|e| HidError::AlsaError(e.to_string()))?;
+    if !output.status.success() {
+        return Err(HidError::AlsaError(format!(
+            "amixer sget PCM failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for token in stdout.split_whitespace() {
+        if let Some(percent) = token
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix("%]"))
+            && let Ok(p) = percent.parse::<u32>()
+        {
+            return Ok(percent_to_unit(p));
+        }
+    }
+    Ok(0.0)
+}
+
+fn write_pcm_playback_volume(card: &str, volume: f32) -> HidResult<()> {
+    let percent = unit_to_percent(volume);
+    let output = std::process::Command::new("amixer")
+        .args(["-c", card, "sset", "PCM", &format!("{percent}%")])
+        .output()
+        .map_err(|e| HidError::AlsaError(e.to_string()))?;
+    if !output.status.success() {
+        return Err(HidError::AlsaError(format!(
+            "amixer sset PCM failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(())
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn unit_to_percent(volume: f32) -> u32 {
+    (volume.clamp(0.0, 1.0) * 100.0).round() as u32
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn percent_to_unit(percent: u32) -> f32 {
+    (percent.min(100) as f32) / 100.0
 }
 
 // --- Parsing helpers -----------------------------------------------------

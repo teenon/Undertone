@@ -108,6 +108,10 @@ pub struct StateSnapshot {
     /// `None` when no device is connected or its state can't be read.
     #[serde(default)]
     pub mic_gain: Option<f32>,
+    /// Current headphone/PCM-playback volume (0.0..=1.0) sourced from
+    /// the active device.
+    #[serde(default)]
+    pub headphone_volume: Option<f32>,
     /// Human-readable name of the active device (e.g. "Elgato Wave XLR").
     /// `None` when no device is connected.
     #[serde(default)]
@@ -135,6 +139,7 @@ impl Default for StateSnapshot {
             created_links: HashMap::new(),
             mic_muted: None,
             mic_gain: None,
+            headphone_volume: None,
             device_model: None,
         }
     }

@@ -72,6 +72,14 @@ async fn set_mic_gain(
     call(&state, Method::SetMicGain { gain }).await
 }
 
+#[tauri::command]
+async fn set_headphone_volume(
+    state: State<'_, DaemonClient>,
+    volume: f32,
+) -> Result<serde_json::Value, String> {
+    call(&state, Method::SetHeadphoneVolume { volume }).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = tracing_subscriber::fmt()
@@ -92,6 +100,7 @@ pub fn run() {
             get_state_snapshot,
             set_mic_mute,
             set_mic_gain,
+            set_headphone_volume,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

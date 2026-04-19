@@ -180,6 +180,15 @@ pub fn handle_request(method: &Method, state: &StateSnapshot) -> HandleResult {
             )
         }
 
+        Method::SetHeadphoneVolume { volume } => {
+            let volume = volume.clamp(0.0, 1.0);
+            debug!(volume, "Setting headphone volume");
+            HandleResult::ok_with_command(
+                json!({"success": true, "volume": volume}),
+                Command::SetHeadphoneVolume { volume },
+            )
+        }
+
         Method::GetOutputDevices => {
             debug!("Getting output devices");
             HandleResult::ok(json!({

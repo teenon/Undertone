@@ -8,6 +8,7 @@ interface Snapshot {
   device_model: string | null;
   mic_muted: boolean | null;
   mic_gain: number | null;
+  headphone_volume?: number | null;
   state: unknown;
   channels?: unknown[];
   app_routes?: unknown[];
@@ -29,6 +30,7 @@ export default function App() {
   // the snapshot catches up.
   const [pendingMute, setPendingMute] = useState<boolean | null>(null);
   const [pendingGain, setPendingGain] = useState<number | null>(null);
+  const [pendingHpVol, setPendingHpVol] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -38,6 +40,13 @@ export default function App() {
       setPendingMute((p) => (p === null || p === snapshot.mic_muted ? null : p));
       setPendingGain((p) =>
         p === null || (snapshot.mic_gain !== null && Math.abs(p - snapshot.mic_gain) < 0.01)
+          ? null
+          : p,
+      );
+      setPendingHpVol((p) =>
+        p === null ||
+        (snapshot.headphone_volume != null &&
+          Math.abs(p - snapshot.headphone_volume) < 0.02)
           ? null
           : p,
       );
@@ -74,6 +83,8 @@ export default function App() {
   const deviceModel = snapshot?.device_model ?? null;
   const muted = pendingMute ?? snapshot?.mic_muted ?? false;
   const gain = pendingGain ?? snapshot?.mic_gain ?? 0;
+  const headphoneVolume =
+    pendingHpVol ?? snapshot?.headphone_volume ?? 0;
 
   const toggleMute = async () => {
     const next = !muted;
@@ -92,6 +103,16 @@ export default function App() {
       await invoke("set_mic_gain", { gain: value });
     } catch (e) {
       setPendingGain(null);
+      setConnection({ kind: "error", message: String(e) });
+    }
+  };
+
+  const updateHeadphoneVolume = async (value: number) => {
+    setPendingHpVol(value);
+    try {
+      await invoke("set_headphone_volume", { volume: value });
+    } catch (e) {
+      setPendingHpVol(null);
       setConnection({ kind: "error", message: String(e) });
     }
   };
@@ -166,6 +187,29 @@ export default function App() {
                 onChange={(e) => void updateGain(parseFloat(e.target.value))}
                 disabled={!connected}
                 className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+              />
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-baseline justify-between">
+                <label className="text-sm font-medium text-zinc-300">
+                  Headphone Volume
+                </label>
+                <span className="font-mono text-sm tabular-nums text-zinc-400">
+                  {Math.round(headphoneVolume * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={headphoneVolume}
+                onChange={(e) =>
+                  void updateHeadphoneVolume(parseFloat(e.target.value))
+                }
+                disabled={!connected}
+                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
               />
             </div>
 

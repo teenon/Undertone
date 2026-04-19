@@ -92,6 +92,8 @@ pub enum Method {
     SetMicGain { gain: f32 },
     /// Set microphone mute state
     SetMicMute { muted: bool },
+    /// Set headphone (PCM playback) volume on the active device (0.0 - 1.0)
+    SetHeadphoneVolume { volume: f32 },
 
     // Output device control
     /// Get available audio output devices

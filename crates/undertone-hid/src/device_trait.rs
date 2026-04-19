@@ -114,6 +114,17 @@ pub trait Device: Send + Sync {
     /// Returns an error when the write fails.
     fn set_gain(&self, gain: f32) -> HidResult<()>;
 
+    /// Set the headphone (PCM playback) volume, normalised to
+    /// `0.0..=1.0`. Devices that don't expose a software-controllable
+    /// headphone output may accept this as a no-op.
+    ///
+    /// # Errors
+    /// Returns an error when the write fails.
+    fn set_headphone_volume(&self, volume: f32) -> HidResult<()> {
+        let _ = volume;
+        Ok(())
+    }
+
     /// Set the LED ring colours, one [`Rgb`] per zone.
     ///
     /// Extra zones beyond the device's capability are ignored; missing
