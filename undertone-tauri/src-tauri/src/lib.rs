@@ -24,6 +24,13 @@ impl DaemonClient {
 /// Open (or reuse) the connection to the daemon socket.
 #[tauri::command]
 async fn connect_daemon(state: State<'_, DaemonClient>) -> Result<(), String> {
+    ensure_connected(&state).await
+}
+
+/// Idempotent connect: opens a new `IpcClient` if the slot is empty,
+/// no-op otherwise. Held lock is dropped before returning so callers
+/// (including the retry path in `call`) can immediately re-acquire.
+async fn ensure_connected(state: &State<'_, DaemonClient>) -> Result<(), String> {
     let mut guard = state.0.lock().await;
     if guard.is_some() {
         return Ok(());
@@ -36,19 +43,55 @@ async fn connect_daemon(state: State<'_, DaemonClient>) -> Result<(), String> {
     Ok(())
 }
 
+/// Send one IPC request. On a connection-shaped error (broken pipe,
+/// unexpected EOF, channel closed — typical when the daemon was
+/// restarted under us) we drop the cached client, reconnect, and try
+/// the request once more. Other errors propagate as-is.
 async fn call(
     state: &State<'_, DaemonClient>,
     method: Method,
+) -> Result<serde_json::Value, String> {
+    match call_once(state, &method).await {
+        Ok(v) => Ok(v),
+        Err(e) if looks_like_dead_connection(&e) => {
+            warn!(error = %e, "daemon connection looks dead; dropping and reconnecting");
+            *state.0.lock().await = None;
+            ensure_connected(state).await?;
+            call_once(state, &method).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn call_once(
+    state: &State<'_, DaemonClient>,
+    method: &Method,
 ) -> Result<serde_json::Value, String> {
     let guard = state.0.lock().await;
     let client = guard
         .as_ref()
         .ok_or_else(|| "daemon not connected — call connect_daemon first".to_string())?;
     let response = client
-        .request(method)
+        .request(method.clone())
         .await
         .map_err(|e| format!("ipc error: {e}"))?;
     response.result.map_err(|e| format!("daemon error {}: {}", e.code, e.message))
+}
+
+/// Heuristic for "this error means the socket is gone, retry from
+/// scratch will probably work". Matches the strings produced by
+/// `IpcError`'s `Display` impl plus the underlying `io::Error`
+/// kinds we observe when the daemon is restarted.
+fn looks_like_dead_connection(err: &str) -> bool {
+    let needles = [
+        "Broken pipe",
+        "Connection reset",
+        "channel closed",
+        "Channel closed",
+        "unexpected end of file",
+        "Unexpected EOF",
+    ];
+    needles.iter().any(|n| err.contains(n))
 }
 
 #[tauri::command]
