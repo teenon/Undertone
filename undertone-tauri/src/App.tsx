@@ -50,11 +50,18 @@ export default function App() {
   const [pendingMute, setPendingMute] = useState<boolean | null>(null);
   const [pendingGain, setPendingGain] = useState<number | null>(null);
   const [pendingHpVol, setPendingHpVol] = useState<number | null>(null);
+  // Heartbeat — increments on every successful refresh. Visible in
+  // the header so we can confirm the poll loop is actually running
+  // (earlier diagnostic: when this stops incrementing the UI looks
+  // frozen at stale values, which was the source of the "sliders
+  // disabled despite daemon healthy" bug).
+  const [tickCount, setTickCount] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
       const snapshot = await invoke<Snapshot>("get_state_snapshot");
       setConnection({ kind: "connected", snapshot });
+      setTickCount((n) => n + 1);
       // Drop optimistic overrides once the daemon agrees.
       setPendingMute((p) => (p === null || p === snapshot.mic_muted ? null : p));
       setPendingGain((p) =>
@@ -117,9 +124,14 @@ export default function App() {
     document.addEventListener("visibilitychange", wake);
     window.addEventListener("pointerenter", wake);
 
+    // Tauri 2's `onFocusChanged` fires from the Rust side and isn't
+    // throttled by webkit2gtk's sleep-the-JS-runtime behaviour, so
+    // it's the most reliable wake signal we have.
     let unlistenTauriFocus: (() => void) | undefined;
     void getCurrentWindow()
-      .listen("tauri://focus", wake)
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) wake();
+      })
       .then((un) => {
         if (cancelled) un();
         else unlistenTauriFocus = un;
@@ -188,7 +200,15 @@ export default function App() {
             <div className="h-7 w-7 rounded-md bg-gradient-to-br from-emerald-400 to-emerald-600" />
             <h1 className="text-lg font-semibold tracking-tight">Undertone</h1>
           </div>
-          <StatusPill state={connection} />
+          <div className="flex items-center gap-2">
+            <span
+              title="Snapshot updates. If this stops incrementing the daemon poll loop has stalled."
+              className="font-mono text-[10px] tabular-nums text-zinc-600"
+            >
+              ♥ {tickCount}
+            </span>
+            <StatusPill state={connection} />
+          </div>
         </div>
       </header>
 
