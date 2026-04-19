@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Undertone
+GenericName=Audio Mixer
+Comment=Linux mixer for Elgato Wave devices (Wave Link replacement)
+Exec=undertone
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+StartupNotify=true
+Keywords=audio;mixer;wave;xlr;elgato;mic;

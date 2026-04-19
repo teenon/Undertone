@@ -1,0 +1,25 @@
+[Unit]
+Description=Undertone audio mixer daemon for Elgato Wave devices
+Documentation=https://github.com/teenon/Undertone
+PartOf=graphical-session.target
+After=pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+
+[Service]
+Type=simple
+# `%h` is the user's home directory. Override the binary path by
+# editing this unit (`systemctl --user edit undertone-daemon`) and
+# providing your own `[Service] ExecStart=` line.
+ExecStart=%h/Undertone/target/release/undertone-daemon
+# Restart on failure but cap the rate so a config bug doesn't hammer
+# the system. 3 s between attempts, max 5 retries per minute.
+Restart=on-failure
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=5
+# Quiet log flooding: send INFO and above by default. Override with
+# `systemctl --user edit undertone-daemon` if you want debug.
+Environment=RUST_LOG=undertone=info
+
+[Install]
+WantedBy=default.target

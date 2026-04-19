@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Record a few seconds from the Wave XLR mic, then play it back through
+# the Wave XLR headphones. Optional first argument is the duration in
+# seconds (default 5).
+#
+# Looks the source/sink up dynamically by prefix because PipeWire
+# sometimes appends a numeric suffix (e.g. `.3`) when the same device
+# re-registers across replugs / wireplumber restarts. Hard-coded names
+# silently fall back to the default device, which on most laptops is
+# the built-in mic — and that captures the wrong audio.
+set -euo pipefail
+
+DURATION="${1:-5}"
+OUT="${TMPDIR:-/tmp}/wave-mic-test.wav"
+
+find_pw_node() {
+    local kind="$1" prefix="$2"
+    pactl list short "$kind" 2>/dev/null \
+        | awk -v p="$prefix" '$2 ~ p {print $2; exit}'
+}
+
+SRC="$(find_pw_node sources '^alsa_input\.usb-Elgato_Systems_Elgato_Wave_XLR_')"
+SINK="$(find_pw_node sinks   '^alsa_output\.usb-Elgato_Systems_Elgato_Wave_XLR_')"
+
+if [[ -z "$SRC" ]]; then
+    echo "wave-mic-test: no Wave XLR input source found in PipeWire" >&2
+    echo "Run 'pactl list short sources' and check the device is registered." >&2
+    exit 1
+fi
+if [[ -z "$SINK" ]]; then
+    echo "wave-mic-test: no Wave XLR output sink found in PipeWire" >&2
+    echo "Run 'pactl list short sinks' and check the device is registered." >&2
+    exit 1
+fi
+
+echo "Source : $SRC"
+echo "Sink   : $SINK"
+echo "Recording ${DURATION}s — speak now…"
+parecord --device="$SRC" --file-format=wav "$OUT" &
+PID=$!
+sleep "$DURATION"
+kill "$PID" 2>/dev/null || true
+wait "$PID" 2>/dev/null || true
+
+echo "Saved to $OUT ($(stat -c%s "$OUT") bytes, $(file -b "$OUT")). Playing back…"
+paplay --device="$SINK" "$OUT"
+echo "Done."

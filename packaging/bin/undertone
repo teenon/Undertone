@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Undertone launcher.
+#
+# Starts the daemon if it isn't already running, waits for the IPC
+# socket to appear, then launches the Tauri desktop UI in the
+# foreground. Closing the UI does not stop the daemon.
+#
+# The repo location is taken from $UNDERTONE_REPO if set, falling back
+# to $HOME/Undertone. Override by exporting `UNDERTONE_REPO` before
+# running, e.g.:
+#
+#   UNDERTONE_REPO=/opt/undertone undertone
+set -euo pipefail
+
+REPO="${UNDERTONE_REPO:-$HOME/Undertone}"
+DAEMON="$REPO/target/release/undertone-daemon"
+APP="$REPO/undertone-tauri/src-tauri/target/release/undertone-tauri"
+SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/undertone/daemon.sock"
+LOG="${XDG_RUNTIME_DIR:-/tmp}/undertone-daemon.log"
+
+if [[ ! -x "$DAEMON" ]]; then
+    echo "undertone: daemon binary not found at $DAEMON" >&2
+    echo "Build it with: (cd \"$REPO\" && cargo build --release -p undertone-daemon)" >&2
+    exit 1
+fi
+if [[ ! -x "$APP" ]]; then
+    echo "undertone: app binary not found at $APP" >&2
+    echo "Build it with: (cd \"$REPO/undertone-tauri\" && cargo tauri build --no-bundle)" >&2
+    exit 1
+fi
+
+if ! pgrep -x undertone-daemon >/dev/null; then
+    # Prefer systemd if the unit is installed so log management and
+    # restarts are uniform; fall back to a direct fork otherwise.
+    if systemctl --user list-unit-files undertone-daemon.service --no-legend 2>/dev/null \
+        | grep -q '^undertone-daemon\.service'; then
+        systemctl --user start undertone-daemon.service
+    else
+        "$DAEMON" >>"$LOG" 2>&1 &
+    fi
+    for _ in $(seq 1 50); do
+        [[ -S "$SOCKET" ]] && break
+        sleep 0.1
+    done
+fi
+
+exec "$APP" "$@"
