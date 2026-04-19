@@ -88,9 +88,27 @@ export default function App() {
     const id = window.setInterval(() => {
       void refresh();
     }, POLL_INTERVAL_MS);
+
+    // WebKit pauses / throttles `setInterval` when the window is
+    // hidden or unfocused, which means a daemon restart that happens
+    // while the window is in the tray (or even just behind another
+    // window) never gets noticed by the auto-reconnect path until the
+    // user looks at the app. Force an immediate refresh on every
+    // focus / visibility transition so the UI heals as soon as the
+    // user brings it forward.
+    const wake = () => {
+      void refresh();
+    };
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) wake();
+    });
+
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      window.removeEventListener("focus", wake);
+      document.removeEventListener("visibilitychange", wake);
     };
   }, [refresh]);
 

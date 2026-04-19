@@ -43,14 +43,20 @@ async fn ensure_connected(state: &State<'_, DaemonClient>) -> Result<(), String>
     Ok(())
 }
 
-/// Send one IPC request. On a connection-shaped error (broken pipe,
-/// unexpected EOF, channel closed — typical when the daemon was
-/// restarted under us) we drop the cached client, reconnect, and try
-/// the request once more. Other errors propagate as-is.
+/// Send one IPC request. Self-healing: every call first ensures
+/// there's a live connection (re-opening one if the slot is empty
+/// — typical case is the previous reconnect raced the daemon
+/// restart and left us disconnected). If the request *itself* then
+/// fails with a connection-shaped error we drop the cached client,
+/// reconnect, and retry once. Other errors propagate as-is.
 async fn call(
     state: &State<'_, DaemonClient>,
     method: Method,
 ) -> Result<serde_json::Value, String> {
+    // Best-effort up-front connect. If the socket isn't ready yet
+    // (daemon mid-restart) we still try the request, which produces
+    // a clearer error and the next 500 ms poll re-enters here.
+    let _ = ensure_connected(state).await;
     match call_once(state, &method).await {
         Ok(v) => Ok(v),
         Err(e) if looks_like_dead_connection(&e) => {
@@ -90,6 +96,9 @@ fn looks_like_dead_connection(err: &str) -> bool {
         "Channel closed",
         "unexpected end of file",
         "Unexpected EOF",
+        "not connected",       // own "daemon not connected" sentinel
+        "Connection refused",  // socket exists but daemon not yet listening
+        "No such file",        // socket file gone (daemon mid-restart)
     ];
     needles.iter().any(|n| err.contains(n))
 }
