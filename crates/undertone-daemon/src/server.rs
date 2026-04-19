@@ -272,3 +272,114 @@ pub fn handle_request(method: &Method, state: &StateSnapshot) -> HandleResult {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use undertone_effects::MicChain;
+
+    fn empty_state() -> StateSnapshot {
+        StateSnapshot::default()
+    }
+
+    fn state_with_chain() -> StateSnapshot {
+        let mut s = StateSnapshot::default();
+        s.mic_chain = Some(MicChain::default().snapshot());
+        s
+    }
+
+    #[test]
+    fn get_mic_chain_returns_snapshot_field_verbatim() {
+        let result = handle_request(&Method::GetMicChain, &state_with_chain());
+        let value = result.response.expect("GetMicChain should not error");
+        // Snapshot has 4 effects.
+        let effects = value.get("effects").and_then(|v| v.as_array()).expect("array");
+        assert_eq!(effects.len(), 4);
+        assert!(value.get("preset").is_some());
+        assert!(result.command.is_none(), "GetMicChain is read-only");
+    }
+
+    #[test]
+    fn get_mic_chain_returns_null_when_chain_absent() {
+        let result = handle_request(&Method::GetMicChain, &empty_state());
+        let value = result.response.expect("GetMicChain should not error");
+        assert!(value.is_null(), "expected null, got {value:?}");
+    }
+
+    #[test]
+    fn set_effect_bypass_emits_command_and_echoes_params() {
+        let result = handle_request(
+            &Method::SetEffectBypass {
+                effect: "compressor".into(),
+                bypassed: true,
+            },
+            &empty_state(),
+        );
+        let value = result.response.expect("ok");
+        assert_eq!(value["success"], true);
+        assert_eq!(value["effect"], "compressor");
+        assert_eq!(value["bypassed"], true);
+        match result.command {
+            Some(Command::SetEffectBypass { effect, bypassed }) => {
+                assert_eq!(effect, "compressor");
+                assert!(bypassed);
+            }
+            other => panic!("expected SetEffectBypass command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn set_effect_param_emits_command_with_full_payload() {
+        let result = handle_request(
+            &Method::SetEffectParam {
+                effect: "gate".into(),
+                param: "th".into(),
+                value: -32.5,
+            },
+            &empty_state(),
+        );
+        assert!(result.response.is_ok());
+        match result.command {
+            Some(Command::SetEffectParam { effect, param, value }) => {
+                assert_eq!(effect, "gate");
+                assert_eq!(param, "th");
+                assert!((value - -32.5).abs() < 1e-6);
+            }
+            other => panic!("expected SetEffectParam command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_effect_preset_passes_name_through() {
+        let result = handle_request(
+            &Method::LoadEffectPreset { name: "Streaming".into() },
+            &empty_state(),
+        );
+        let value = result.response.expect("ok");
+        assert_eq!(value["preset"], "Streaming");
+        match result.command {
+            Some(Command::LoadEffectPreset { name }) => assert_eq!(name, "Streaming"),
+            other => panic!("expected LoadEffectPreset command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reset_effect_chain_emits_unit_command() {
+        let result = handle_request(&Method::ResetEffectChain, &empty_state());
+        assert!(result.response.is_ok());
+        assert!(matches!(result.command, Some(Command::ResetEffectChain)));
+    }
+
+    // Sanity check that the existing handlers we didn't touch still
+    // route correctly — guards against an accidental match-arm
+    // ordering bug in the file.
+    #[test]
+    fn set_mic_mute_still_routes_to_set_mic_mute_command() {
+        let result = handle_request(
+            &Method::SetMicMute { muted: true },
+            &empty_state(),
+        );
+        assert!(result.response.is_ok());
+        assert!(matches!(result.command, Some(Command::SetMicMute { muted: true })));
+    }
+}

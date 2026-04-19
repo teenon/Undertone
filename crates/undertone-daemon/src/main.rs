@@ -1085,3 +1085,90 @@ fn pactl_default(kind: &str) -> Option<String> {
         Some(trimmed.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_effect_kind_accepts_snake_and_camel() {
+        assert_eq!(parse_effect_kind("noise_suppression"), Some(EffectKind::NoiseSuppression));
+        assert_eq!(parse_effect_kind("NoiseSuppression"), Some(EffectKind::NoiseSuppression));
+        assert_eq!(parse_effect_kind("gate"), Some(EffectKind::Gate));
+        assert_eq!(parse_effect_kind("Gate"), Some(EffectKind::Gate));
+        assert_eq!(parse_effect_kind("compressor"), Some(EffectKind::Compressor));
+        assert_eq!(parse_effect_kind("Compressor"), Some(EffectKind::Compressor));
+        assert_eq!(parse_effect_kind("equalizer"), Some(EffectKind::Equalizer));
+        assert_eq!(parse_effect_kind("Equalizer"), Some(EffectKind::Equalizer));
+    }
+
+    #[test]
+    fn parse_effect_kind_rejects_unknown() {
+        assert_eq!(parse_effect_kind(""), None);
+        assert_eq!(parse_effect_kind("eq"), None); // node_id, not kind name
+        assert_eq!(parse_effect_kind("limiter"), None);
+        assert_eq!(parse_effect_kind("NOISESUPPRESSION"), None);
+    }
+
+    #[test]
+    fn node_id_to_kind_round_trips_with_effect_kind_node_id() {
+        for &kind in EffectKind::all() {
+            assert_eq!(node_id_to_kind(kind.node_id()), Some(kind));
+        }
+    }
+
+    #[test]
+    fn node_id_to_kind_rejects_unknown_ids() {
+        assert_eq!(node_id_to_kind("foobar"), None);
+        assert_eq!(node_id_to_kind(""), None);
+        assert_eq!(node_id_to_kind("Compressor"), None); // kind name, not node_id
+    }
+
+    #[test]
+    fn apply_effect_change_mutates_the_named_effect_only() {
+        let mut chain = MicChain::default();
+        // Sanity: gate starts bypassed.
+        assert!(chain.effect(EffectKind::Gate).unwrap().bypassed);
+        apply_effect_change(&mut chain, "gate", |inst| {
+            inst.bypassed = false;
+        });
+        assert!(!chain.effect(EffectKind::Gate).unwrap().bypassed);
+        // Other effects untouched.
+        assert!(chain.effect(EffectKind::Compressor).unwrap().bypassed);
+        assert!(chain.effect(EffectKind::Equalizer).unwrap().bypassed);
+    }
+
+    #[test]
+    fn apply_effect_change_is_a_noop_for_unknown_kind() {
+        let mut chain = MicChain::default();
+        let before = chain
+            .effects
+            .iter()
+            .map(|e| e.bypassed)
+            .collect::<Vec<_>>();
+        apply_effect_change(&mut chain, "not_a_real_effect", |inst| {
+            inst.bypassed = false;
+        });
+        let after = chain
+            .effects
+            .iter()
+            .map(|e| e.bypassed)
+            .collect::<Vec<_>>();
+        assert_eq!(before, after, "unknown kind should leave the chain alone");
+    }
+
+    #[test]
+    fn apply_effect_change_persists_param_writes() {
+        let mut chain = MicChain::default();
+        apply_effect_change(&mut chain, "compressor", |inst| {
+            inst.params.insert("th".into(), -25.0);
+        });
+        let v = chain
+            .effect(EffectKind::Compressor)
+            .unwrap()
+            .params
+            .get("th")
+            .copied();
+        assert_eq!(v, Some(-25.0));
+    }
+}
