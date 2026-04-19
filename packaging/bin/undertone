@@ -29,7 +29,21 @@ if [[ ! -x "$APP" ]]; then
     exit 1
 fi
 
-if ! pgrep -x undertone-daemon >/dev/null; then
+daemon_already_running() {
+    # `systemctl --user is-active` is the cheapest, most accurate
+    # check when the unit is installed.
+    if systemctl --user is-active --quiet undertone-daemon.service 2>/dev/null; then
+        return 0
+    fi
+    # Fallback: walk for any process whose command line exactly
+    # matches the daemon binary path. We can't use `pgrep -x
+    # undertone-daemon` because the kernel's `comm` field is
+    # truncated to 15 chars and pgrep refuses to match patterns
+    # longer than that. `pgrep -f` matches the full cmdline.
+    pgrep -f -- "^${DAEMON}\$" >/dev/null 2>&1
+}
+
+if ! daemon_already_running; then
     # Prefer systemd if the unit is installed so log management and
     # restarts are uniform; fall back to a direct fork otherwise.
     if systemctl --user list-unit-files undertone-daemon.service --no-legend 2>/dev/null \
