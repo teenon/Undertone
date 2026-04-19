@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./App.css";
 import EffectsPanel, { MicChainSnapshot } from "./components/EffectsPanel";
 
@@ -75,40 +76,61 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+
+    // Recursive setTimeout instead of setInterval. setInterval gets
+    // aggressively throttled / paused by webkit2gtk on minimized or
+    // unfocused windows, which is why the UI was getting stuck on
+    // stale state. setTimeout chained per-call always fires the next
+    // tick on the runtime's first opportunity once the page is alive
+    // again, so we resume polling immediately on window-show.
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        await refresh();
+      } catch {
+        // refresh sets its own error state; just keep the loop alive
+      }
+      if (cancelled) return;
+      window.setTimeout(() => void tick(), POLL_INTERVAL_MS);
+    };
+
     (async () => {
       try {
         await invoke("connect_daemon");
         if (cancelled) return;
-        await refresh();
+        void tick();
       } catch (e) {
         if (!cancelled)
           setConnection({ kind: "error", message: String(e) });
       }
     })();
-    const id = window.setInterval(() => {
-      void refresh();
-    }, POLL_INTERVAL_MS);
 
-    // WebKit pauses / throttles `setInterval` when the window is
-    // hidden or unfocused, which means a daemon restart that happens
-    // while the window is in the tray (or even just behind another
-    // window) never gets noticed by the auto-reconnect path until the
-    // user looks at the app. Force an immediate refresh on every
-    // focus / visibility transition so the UI heals as soon as the
-    // user brings it forward.
-    const wake = () => {
-      void refresh();
-    };
+    // Belt-and-braces: every wake-up path forces an immediate
+    // refresh so the UI snaps back the moment the user looks at it.
+    // - JS focus event (browser-level)
+    // - JS visibilitychange (HTML5)
+    // - Tauri native window-focus (works even when webkit ignored
+    //   the JS event)
+    // - Pointer entering the window
+    const wake = () => void refresh();
     window.addEventListener("focus", wake);
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) wake();
-    });
+    document.addEventListener("visibilitychange", wake);
+    window.addEventListener("pointerenter", wake);
+
+    let unlistenTauriFocus: (() => void) | undefined;
+    void getCurrentWindow()
+      .listen("tauri://focus", wake)
+      .then((un) => {
+        if (cancelled) un();
+        else unlistenTauriFocus = un;
+      });
 
     return () => {
       cancelled = true;
-      window.clearInterval(id);
       window.removeEventListener("focus", wake);
       document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("pointerenter", wake);
+      unlistenTauriFocus?.();
     };
   }, [refresh]);
 
