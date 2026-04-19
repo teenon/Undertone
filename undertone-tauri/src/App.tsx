@@ -100,9 +100,14 @@ export default function App() {
   const serial = snapshot?.device_serial ?? null;
   const deviceModel = snapshot?.device_model ?? null;
   const muted = pendingMute ?? snapshot?.mic_muted ?? false;
-  const gain = pendingGain ?? snapshot?.mic_gain ?? 0;
-  const headphoneVolume =
-    pendingHpVol ?? snapshot?.headphone_volume ?? 0;
+  // `undefined` here means "no value yet — the first snapshot poll
+  // hasn't returned". The slider renders disabled with `—` in that
+  // case so we don't show a misleading 0% before the daemon's real
+  // value arrives.
+  const gain: number | undefined =
+    pendingGain ?? snapshot?.mic_gain ?? undefined;
+  const headphoneVolume: number | undefined =
+    pendingHpVol ?? snapshot?.headphone_volume ?? undefined;
 
   const toggleMute = async () => {
     const next = !muted;
@@ -193,7 +198,7 @@ export default function App() {
                   Mic Gain
                 </label>
                 <span className="font-mono text-sm tabular-nums text-zinc-400">
-                  {Math.round(gain * 100)}%
+                  {gain === undefined ? "—" : `${Math.round(gain * 100)}%`}
                 </span>
               </div>
               <input
@@ -201,9 +206,9 @@ export default function App() {
                 min={0}
                 max={1}
                 step={0.01}
-                value={gain}
+                value={gain ?? 0}
                 onChange={(e) => void updateGain(parseFloat(e.target.value))}
-                disabled={!connected}
+                disabled={!connected || gain === undefined}
                 className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
               />
             </div>
@@ -214,7 +219,9 @@ export default function App() {
                   Headphone Volume
                 </label>
                 <span className="font-mono text-sm tabular-nums text-zinc-400">
-                  {Math.round(headphoneVolume * 100)}%
+                  {headphoneVolume === undefined
+                    ? "—"
+                    : `${Math.round(headphoneVolume * 100)}%`}
                 </span>
               </div>
               <input
@@ -222,11 +229,11 @@ export default function App() {
                 min={0}
                 max={1}
                 step={0.01}
-                value={headphoneVolume}
+                value={headphoneVolume ?? 0}
                 onChange={(e) =>
                   void updateHeadphoneVolume(parseFloat(e.target.value))
                 }
-                disabled={!connected}
+                disabled={!connected || headphoneVolume === undefined}
                 className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
               />
             </div>

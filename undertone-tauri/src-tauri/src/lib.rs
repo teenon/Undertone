@@ -3,9 +3,11 @@
 
 use std::sync::Arc;
 
-use tauri::{Manager, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, State, WindowEvent};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use undertone_ipc::{IpcClient, Method, socket_path};
 
 /// Shared handle to the (lazily connected) daemon client. The Mutex
@@ -132,7 +134,56 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(DaemonClient::new());
+
+            // System tray. Reuses the existing app icon. Best-effort:
+            // if the desktop has no tray support (some Wayland
+            // compositors) we log and continue — close-to-hide still
+            // works, the user just can't bring the window back from
+            // tray.
+            let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+            let hide_item = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
+
+            let tray = TrayIconBuilder::with_id("undertone-tray")
+                .icon(app.default_window_icon().expect("no default icon").clone())
+                .tooltip("Undertone")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => toggle_window(app, Some(true)),
+                    "hide" => toggle_window(app, Some(false)),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        toggle_window(tray.app_handle(), None);
+                    }
+                })
+                .build(app);
+
+            if let Err(e) = tray {
+                warn!(error = %e, "Failed to create system tray icon — close-to-hide still works but no tray indicator");
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Intercept the window's X button: hide instead of exit so
+            // the React state survives. The tray "Quit" entry is the
+            // only path that actually terminates the process.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if let Err(e) = window.hide() {
+                    error!(error = %e, "Failed to hide window on close-requested");
+                } else {
+                    api.prevent_close();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             connect_daemon,
@@ -150,4 +201,23 @@ pub fn run() {
         .unwrap_or_else(|e| {
             error!(error = %e, "tauri runtime exited with error");
         });
+}
+
+/// Show/hide/toggle the main window. `None` toggles based on current
+/// visibility; `Some(true)` forces show, `Some(false)` forces hide.
+fn toggle_window(app: &tauri::AppHandle, force: Option<bool>) {
+    let Some(window) = app.get_webview_window("main") else {
+        warn!("toggle_window: no main window present");
+        return;
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    let target = force.unwrap_or(!visible);
+    let result = if target {
+        window.show().and_then(|()| window.set_focus())
+    } else {
+        window.hide()
+    };
+    if let Err(e) = result {
+        error!(error = %e, "toggle_window failed");
+    }
 }

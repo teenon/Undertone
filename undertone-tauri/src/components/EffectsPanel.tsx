@@ -137,7 +137,7 @@ export default function EffectsPanel({ chain }: Props) {
           Effects
         </div>
         <p className="mt-2 text-sm text-zinc-400">
-          Loading effect chain…
+          Connecting to daemon…
         </p>
       </section>
     );
