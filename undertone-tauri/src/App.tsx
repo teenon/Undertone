@@ -85,6 +85,50 @@ function MuteIconButton({
   );
 }
 
+function DeafenIconButton({
+  deafened,
+  disabled,
+  onClick,
+}: {
+  deafened: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const label = deafened ? "Undeafen" : "Deafen";
+  const stateClasses = disabled
+    ? "border-zinc-700 text-zinc-600 cursor-not-allowed"
+    : deafened
+    ? "border-red-500/70 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+    : "border-sky-500/60 text-sky-400 hover:bg-sky-500/10";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={deafened}
+      aria-label={label}
+      title={label}
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-colors ${stateClasses}`}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className="h-[18px] w-[18px]"
+      >
+        <path d="M3 14v-2a9 9 0 0 1 18 0v2" />
+        <path d="M3 14h4v6H5a2 2 0 0 1-2-2v-4z" />
+        <path d="M21 14h-4v6h2a2 2 0 0 0 2-2v-4z" />
+        {deafened && <line x1="4" y1="4" x2="20" y2="20" />}
+      </svg>
+    </button>
+  );
+}
+
 export default function App() {
   const [connection, setConnection] = useState<ConnectionState>({
     kind: "connecting",
@@ -95,6 +139,9 @@ export default function App() {
   const [pendingMute, setPendingMute] = useState<boolean | null>(null);
   const [pendingGain, setPendingGain] = useState<number | null>(null);
   const [pendingHpVol, setPendingHpVol] = useState<number | null>(null);
+  // Deafen is UI-only: when non-null, holds the volume to restore on undeafen.
+  // Daemon just sees a set_headphone_volume(0) → set_headphone_volume(prev).
+  const [savedVolume, setSavedVolume] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -230,6 +277,20 @@ export default function App() {
     }
   };
 
+  const toggleDeafen = async () => {
+    const target = savedVolume !== null ? savedVolume : 0;
+    const nextSaved =
+      savedVolume !== null ? null : headphoneVolume ?? 0;
+    setPendingHpVol(target);
+    try {
+      await invoke("set_headphone_volume", { volume: target });
+      setSavedVolume(nextSaved);
+    } catch (e) {
+      setPendingHpVol(null);
+      setConnection({ kind: "error", message: String(e) });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <header className="border-b border-zinc-800/60 px-8 py-4">
@@ -321,18 +382,29 @@ export default function App() {
                     : `${Math.round(headphoneVolume * 100)}%`}
                 </span>
               </div>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={headphoneVolume ?? 0}
-                onChange={(e) =>
-                  void updateHeadphoneVolume(parseFloat(e.target.value))
-                }
-                disabled={!connected || headphoneVolume === undefined}
-                className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
-              />
+              <div className="flex items-center gap-3">
+                <DeafenIconButton
+                  deafened={savedVolume !== null}
+                  disabled={!connected || headphoneVolume === undefined}
+                  onClick={() => void toggleDeafen()}
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={headphoneVolume ?? 0}
+                  onChange={(e) =>
+                    void updateHeadphoneVolume(parseFloat(e.target.value))
+                  }
+                  disabled={
+                    !connected ||
+                    headphoneVolume === undefined ||
+                    savedVolume !== null
+                  }
+                  className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-zinc-800 accent-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
+                />
+              </div>
             </div>
 
           </div>
