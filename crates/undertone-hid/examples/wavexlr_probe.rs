@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use undertone_hid::{STATE_BLOB_LEN, WaveXlrDevice, WaveXlrProbe};
+use undertone_hid::{STATE_BLOB_LEN, WaveXlrDevice};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -28,10 +28,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("No Wave XLR found — check `lsusb | grep 0fd9:007d`")?;
     println!("Detected Wave XLR, serial = {}", device.serial());
 
-    let probe = WaveXlrProbe::open()?;
+    let handle = device.into_handle()?;
     println!(
-        "Opened USB control channel (claims interface 0 — the Wave XLR's \
-         ALSA card is unregistered while this probe runs)."
+        "Opened USB control channel on interface 3. Audio routing on \
+         interfaces 0–2 is unaffected."
     );
     println!(
         "Polling every {}ms. Stop with Ctrl-C.\n",
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ever_changed: BTreeSet<usize> = BTreeSet::new();
 
     loop {
-        let blob = probe.read_raw_state()?;
+        let blob = handle.read_raw_state()?;
         let elapsed = start.elapsed().as_secs_f32();
 
         if let Some(p) = prev {

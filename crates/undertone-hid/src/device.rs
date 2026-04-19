@@ -258,9 +258,19 @@ pub fn scan_devices() -> HidResult<Vec<Arc<dyn Device>>> {
     }
 
     if let Some(wavexlr) = WaveXlrDevice::detect()? {
-        let handle = wavexlr.into_handle();
-        info!(serial = handle.serial(), "Registered Wave XLR device");
-        devices.push(handle);
+        match wavexlr.into_handle() {
+            Ok(handle) => {
+                info!(serial = handle.serial(), "Registered Wave XLR device");
+                devices.push(handle);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Wave XLR detected but could not open control channel \
+                     (check udev rule for 0fd9:007d)"
+                );
+            }
+        }
     }
 
     Ok(devices)
