@@ -9,6 +9,7 @@ pub mod queries;
 pub mod schema;
 
 pub use error::{DbError, DbResult};
+pub use queries::DeviceSettings;
 
 use directories::ProjectDirs;
 use rusqlite::Connection;

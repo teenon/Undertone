@@ -18,7 +18,7 @@ mod signals;
 
 use undertone_core::channel::ChannelState;
 use undertone_core::state::{DaemonState, StateSnapshot};
-use undertone_db::Database;
+use undertone_db::{Database, DeviceSettings};
 use undertone_effects::{EffectKind, MicChain, PresetName};
 use undertone_hid::{Device, scan_devices};
 use undertone_ipc::{
@@ -79,6 +79,7 @@ async fn main() -> Result<()> {
                     serial = d.serial(),
                     "Registered device"
                 );
+                apply_persisted_settings(d, &db);
             }
             list
         }
@@ -322,7 +323,7 @@ async fn main() -> Result<()> {
                         // again — no need to wait for the 5 s retry.
                         if devices.is_empty()
                             && let Some((new_serial, _)) =
-                                rescan_and_register(&mut devices, &event_tx)
+                                rescan_and_register(&mut devices, &event_tx, &db)
                         {
                             device_serial = Some(new_serial);
                         }
@@ -873,6 +874,7 @@ async fn main() -> Result<()> {
                                             gain,
                                             "Mic gain set"
                                         );
+                                        persist_device_settings(device, &db);
                                     }
                                     Err(e) => {
                                         error!(error = %e, "Failed to set mic gain");
@@ -892,6 +894,7 @@ async fn main() -> Result<()> {
                                             muted,
                                             "Mic mute set"
                                         );
+                                        persist_device_settings(device, &db);
                                     }
                                     Err(e) => {
                                         error!(error = %e, "Failed to set mic mute");
@@ -911,6 +914,7 @@ async fn main() -> Result<()> {
                                             volume,
                                             "Headphone volume set"
                                         );
+                                        persist_device_settings(device, &db);
                                     }
                                     Err(e) => {
                                         error!(error = %e, "Failed to set headphone volume");
@@ -1028,7 +1032,7 @@ async fn main() -> Result<()> {
             _ = device_scan_retry.tick() => {
                 if devices.is_empty()
                     && let Some((new_serial, _)) =
-                        rescan_and_register(&mut devices, &event_tx)
+                        rescan_and_register(&mut devices, &event_tx, &db)
                 {
                     device_connected = true;
                     device_serial = Some(new_serial);
@@ -1057,6 +1061,7 @@ async fn main() -> Result<()> {
 fn rescan_and_register(
     devices: &mut Vec<Arc<dyn Device>>,
     event_tx: &tokio::sync::broadcast::Sender<Event>,
+    db: &Database,
 ) -> Option<(String, String)> {
     match scan_devices() {
         Ok(list) if list.is_empty() => None,
@@ -1070,6 +1075,7 @@ fn rescan_and_register(
                     serial = %serial,
                     "Re-scan picked up device"
                 );
+                apply_persisted_settings(d, db);
                 if first.is_none() {
                     first = Some((serial.clone(), model.clone()));
                 }
@@ -1086,6 +1092,62 @@ fn rescan_and_register(
             debug!(error = %e, "Device re-scan errored");
             None
         }
+    }
+}
+
+/// On startup / hotplug, push any previously-persisted firmware values
+/// to the device so it returns to the state the user left it in,
+/// regardless of what the device firmware currently holds. No row yet
+/// → no-op (respect the firmware's current values on first-ever connect).
+fn apply_persisted_settings(device: &Arc<dyn Device>, db: &Database) {
+    let serial = device.serial();
+    match db.load_device_settings(serial) {
+        Ok(Some(s)) => {
+            if let Err(e) = device.set_gain(s.mic_gain) {
+                warn!(error = %e, serial, "Failed to restore mic gain from db");
+            }
+            if let Err(e) = device.set_mute(s.mic_muted) {
+                warn!(error = %e, serial, "Failed to restore mic mute from db");
+            }
+            if let Err(e) = device.set_headphone_volume(s.headphone_volume) {
+                warn!(error = %e, serial, "Failed to restore headphone volume from db");
+            }
+            info!(
+                serial,
+                mic_gain = s.mic_gain,
+                mic_muted = s.mic_muted,
+                headphone_volume = s.headphone_volume,
+                "Restored persisted device settings"
+            );
+        }
+        Ok(None) => {
+            debug!(serial, "No persisted settings for this device yet");
+        }
+        Err(e) => {
+            warn!(error = %e, serial, "Failed to load persisted device settings");
+        }
+    }
+}
+
+/// Snapshot the device's current state and write the full triple to
+/// the db. Called after every successful Set* so a crash or daemon
+/// restart can restore the exact same values.
+fn persist_device_settings(device: &Arc<dyn Device>, db: &Database) {
+    let serial = device.serial();
+    let state = match device.get_state() {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(error = %e, serial, "Failed to read device state for persistence");
+            return;
+        }
+    };
+    let settings = DeviceSettings {
+        mic_gain: state.mic_gain,
+        mic_muted: state.mic_muted,
+        headphone_volume: state.headphone_volume,
+    };
+    if let Err(e) = db.save_device_settings(serial, &settings) {
+        warn!(error = %e, serial, "Failed to persist device settings");
     }
 }
 

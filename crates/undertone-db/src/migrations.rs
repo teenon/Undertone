@@ -7,11 +7,17 @@ use crate::error::{DbError, DbResult};
 use crate::schema::{DEFAULT_DATA, SCHEMA_V1};
 
 /// Current schema version.
-const CURRENT_VERSION: i32 = 2;
+const CURRENT_VERSION: i32 = 3;
 
 /// Migration v2: Add `mixer_state` column to profiles.
 const SCHEMA_V2: &str = r"
 ALTER TABLE profiles ADD COLUMN mixer_state TEXT;
+";
+
+/// Migration v3: Add `mic_muted` and `headphone_volume` to device_settings.
+const SCHEMA_V3: &str = r"
+ALTER TABLE device_settings ADD COLUMN mic_muted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE device_settings ADD COLUMN headphone_volume REAL NOT NULL DEFAULT 0.5;
 ";
 
 /// Run all pending migrations.
@@ -64,6 +70,10 @@ fn apply_migration(conn: &Connection, version: i32) -> DbResult<()> {
         }
         2 => {
             conn.execute_batch(SCHEMA_V2)?;
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", [version])?;
+        }
+        3 => {
+            conn.execute_batch(SCHEMA_V3)?;
             conn.execute("INSERT INTO schema_version (version) VALUES (?)", [version])?;
         }
         _ => {
