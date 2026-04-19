@@ -81,7 +81,10 @@ impl AlsaMicControl {
     /// # Errors
     /// Returns an error if the ALSA control cannot be accessed.
     pub fn set_mute(&self, muted: bool) -> HidResult<()> {
-        let state = if muted { "mute" } else { "unmute" };
+        // Capture switches use `cap`/`nocap`; `mute`/`unmute` only work
+        // for playback switches and amixer rejects them with "Invalid
+        // command!" on capture-only controls like Wave XLR's `Mic`.
+        let state = if muted { "nocap" } else { "cap" };
 
         let output = std::process::Command::new("amixer")
             .args(["-c", &self.card_name, "sset", "Mic", state])
